@@ -487,6 +487,12 @@ func main() {
 	// 从环境变量读取 Codex 画像与 Beta 配置。
 	deviceCfg := proxy.DeviceProfileConfigFromEnv(os.Getenv)
 	handler := proxy.NewHandler(store, db, cfg, deviceCfg)
+	conversations, conversationErr := proxy.NewConversationRecorder(db)
+	if conversationErr != nil {
+		log.Fatalf("初始化对话留存失败: %v", conversationErr)
+	}
+	defer conversations.Close()
+	handler.SetConversationRecorder(conversations)
 	handler.SetRuntimeCache(tc)
 	defer handler.CloseAPIKeyAuthCache()
 	adminHandler.SetAPIKeyAuthCacheHandler(handler)

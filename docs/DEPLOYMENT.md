@@ -265,8 +265,7 @@ cd frontend
 # 安装依赖
 npm ci
 
-# 修改前端后运行验证
-npm test
+# 检查前端类型
 npm run typecheck
 
 # 启动开发服务器

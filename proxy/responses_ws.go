@@ -331,6 +331,8 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	resetPromptRequestSecurityFrame(c)
 	resetPromptPolicyRequestCorrelationID(c)
 	resetUpstreamRequestTrace(c)
+	finishConversation := h.beginConversation(c, rawPayload, "application/x-ndjson")
+	defer finishConversation()
 	quotaParentRequest := c.Request
 	if err := h.refreshAPIKeyModelRequestQuotaTurn(c); err != nil {
 		return writeResponsesWSErrorForContext(c, conn, apiKeyModelRequestError(err).apiErr)

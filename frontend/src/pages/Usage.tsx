@@ -1,3 +1,4 @@
+import { ConversationDetails, ConversationRetentionSettings } from '../components/ConversationDetails'
 import { ImageBillingCost } from '../components/image-studio/ImageBillingCost'
 import { mediaBillingUnit, type MediaBillingUnit } from '../lib/imageBilling'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -1843,6 +1844,8 @@ export default function Usage() {
           onRefresh={() => { void reload(); void loadLogs(); void loadAPIKeys() }}
           titleAdornment={<ChannelFilter value={channel} onChange={setChannel} />}
           actions={
+            <>
+            <ConversationRetentionSettings />
             <Button
               variant="outline"
               aria-pressed={showAnalysis}
@@ -1851,6 +1854,7 @@ export default function Usage() {
               <BarChart3 className="size-3.5" />
               {showAnalysis ? t('usage.hideAnalysis') : t('usage.showAnalysis')}
             </Button>
+            </>
           }
         />
 
@@ -2405,6 +2409,7 @@ export default function Usage() {
                               <StatusCodeBadge log={log} />
                             </button>
                           )}
+                          <ConversationDetails logId={log.id} />
                           {log.upstream_error_kind === 'cyber_policy' ? <CyberPolicyDetailButton log={log} /> : null}
                           {visibleColumns.type && log.via_websocket ? (
                             <Badge
@@ -2622,6 +2627,7 @@ export default function Usage() {
                       {visibleColumns.cost && <TableHead className={`${usageTableHeadClass} text-right`}>{t('usage.tableCost')}</TableHead>}
                       {visibleColumns.error && <TableHead className={usageTableHeadClass}>{t('usage.tableError')}</TableHead>}
                       {visibleColumns.time && <TableHead className={`${usageTableHeadClass} text-right`}>{t('usage.tableTime')}</TableHead>}
+                      <TableHead className={usageTableHeadClass}>对话</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -2798,6 +2804,7 @@ export default function Usage() {
                         {visibleColumns.time && <TableCell className={`${usageTableMonoClass} text-right whitespace-nowrap`}>
                           <UsageTimeCell value={log.created_at} />
                         </TableCell>}
+                      <TableCell><ConversationDetails logId={log.id} /></TableCell>
                       </TableRow>
                       )
                     })}

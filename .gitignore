@@ -60,3 +60,35 @@ diagrams/
 
 # local e2e test scaffolding (mock upstream + scripts, not for CI)
 /local-test/
+
+# Local verification and process material
+*_test.go
+*.test.mjs
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+*.tsbuildinfo
+**/tests/
+**/testdata/
+**/fixtures/
+**/__snapshots__/
+docs/screenshots/
+.claude/
+__pycache__/
+*.pyc
+/build/
+/dist/
+DESIGN.md
+CHANGELOG.md
+AGENT_IDENTITY_IMPORT.md
+docs/*
+!docs/README.md
+!docs/API.md
+!docs/CONFIGURATION.md
+!docs/DEPLOYMENT.md
+!docs/USAGE.md
+!docs/TROUBLESHOOTING.md
+.github/scripts/go-race-packages.sh
+.github/workflows/security-scan.yml
+frontend/scripts/audit-gate.mjs

@@ -273,6 +273,7 @@ func writeResponsesWSInterruptAck(conn *websocket.Conn, ack responsesWSInterrupt
 }
 
 func writeResponsesWSObservedMessage(ctx context.Context, conn *websocket.Conn, payload []byte) error {
+	captureConversationFrame(ctx, payload)
 	state := responsesWSInterruptFromContext(ctx)
 	if state == nil {
 		return writeResponsesWSMessage(conn, payload)

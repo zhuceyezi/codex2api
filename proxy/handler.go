@@ -58,6 +58,7 @@ func upstreamErrorConsoleBody(body []byte) string {
 
 // Handler API 路由处理器
 type Handler struct {
+	conversations   *ConversationRecorder
 	store           *auth.Store
 	configKeys      map[string]bool // 配置文件中的静态 key
 	db              *database.DB
@@ -3362,6 +3363,7 @@ func appendMissingResponseImageOutputs(responseJSON []byte, imageOutputs []json.
 // RegisterRoutes 注册路由
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	auth := h.authMiddleware()
+	r.Use(h.conversationMiddleware())
 
 	// /v1 前缀路由（标准路径）
 	v1 := r.Group("/v1")

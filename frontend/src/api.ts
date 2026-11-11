@@ -570,6 +570,10 @@ export interface ModelTraceBankUpdateResult extends ModelTraceBankStatus {
 }
 
 export const api = {
+  getUsageConversation: (id: number) => request<{request_id: string; endpoint: string; request_body: string; response_body: string; content_type: string; truncated: boolean; created_at: number}>(`/usage/logs/${id}/conversation`),
+  getConversationRetention: () => request<{retention_days: number; max_body_bytes: number}>('/usage/conversation-retention'),
+  updateConversationRetention: (days: number) => request<{retention_days: number}>('/usage/conversation-retention', {method: 'PUT', body: JSON.stringify({retention_days: days})}),
+
   getBranding: () => requestPublic<SiteBranding>('/api/branding'),
   // 公开账号自助门户:生成 OpenAI 授权链接(无鉴权)。
   generateAccountPortalAuthURL: (data: { contact_email: string }) =>

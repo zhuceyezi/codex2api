@@ -175,14 +175,7 @@ func newDefaultSystemReleaseClient() *defaultSystemReleaseClient {
 }
 
 func (h *Handler) GetSystemUpdate(c *gin.Context) {
-	updater := h.systemUpdater()
-	info, err := updater.Check(c.Request.Context())
-	if err != nil {
-		log.Printf("检查系统更新失败，已静默降级: %v", err)
-		c.JSON(http.StatusOK, updater.unavailableInfo())
-		return
-	}
-	c.JSON(http.StatusOK, info)
+	c.JSON(http.StatusOK, &systemUpdateInfo{CurrentVersion: version.Current(), LatestVersion: version.Current(), Mode: "fork", Supported: false, UnsupportedReason: "此 fork 通过每日同步任务更新，保留对话留存功能。"})
 }
 
 func (u *systemUpdater) unavailableInfo() *systemUpdateInfo {
@@ -211,6 +204,11 @@ func (u *systemUpdater) unavailableInfo() *systemUpdateInfo {
 }
 
 func (h *Handler) PerformSystemUpdate(c *gin.Context) {
+	writeError(c, http.StatusConflict, "此 fork 由每日同步任务维护，请勿用上游二进制覆盖。")
+	return
+}
+
+func (h *Handler) performUpstreamSystemUpdate(c *gin.Context) {
 	result, err := h.systemUpdater().PerformUpdate(c.Request.Context())
 	if err == nil {
 		c.JSON(http.StatusOK, result)
