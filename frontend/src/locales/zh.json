@@ -2835,6 +2835,7 @@
     "cacheWriteBadge": "写入 {{tokens}}",
     "cacheWriteTooltip": "缓存写入：5 分钟 {{m5}} · 1 小时 {{h1}}",
     "cacheReadTooltip": "读取缓存：{{tokens}}",
+    "cacheHitRateTooltip": "缓存命中率：{{rate}}（缓存读取 Token / 输入 Token）",
     "cacheCreateTooltip": "创建缓存：{{tokens}}（5 分钟 {{m5}} · 1 小时 {{h1}}）",
     "claudeInputTooltip": "未缓存输入：{{input}}；总输入：{{total}}（含读取缓存 {{read}}、创建缓存 {{write}}）",
     "totalInputTokens": "总输入（含缓存）",

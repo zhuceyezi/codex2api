@@ -2835,6 +2835,7 @@
     "cacheWriteBadge": "write {{tokens}}",
     "cacheWriteTooltip": "Cache writes: 5m {{m5}} · 1h {{h1}}",
     "cacheReadTooltip": "Cache read: {{tokens}}",
+    "cacheHitRateTooltip": "Cache hit rate: {{rate}} (cache-read tokens / input tokens)",
     "cacheCreateTooltip": "Cache creation: {{tokens}} (5m {{m5}} · 1h {{h1}})",
     "claudeInputTooltip": "Uncached input: {{input}}; total input: {{total}} (cache read {{read}}, cache creation {{write}})",
     "totalInputTokens": "Total input (incl. cache)",

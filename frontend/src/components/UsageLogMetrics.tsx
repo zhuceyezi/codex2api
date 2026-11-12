@@ -63,7 +63,10 @@ export function UsageCacheBadges({ log, align = 'end' }: { log: UsageMetricLog; 
   if (tokens.cacheReadTokens === 0 && tokens.cacheWriteTokens === 0) {
     return <span className={`${usageTableMonoClass} text-muted-foreground/50`}>-</span>
   }
-  const readTitle = t('usage.cacheReadTooltip', { tokens: formatTokens(tokens.cacheReadTokens, true) })
+  const cacheHitRate = tokens.totalInputTokens > 0
+    ? `${Math.min(100, tokens.cacheReadTokens / tokens.totalInputTokens * 100).toFixed(1)}%`
+    : '—'
+  const readTitle = `${t('usage.cacheReadTooltip', { tokens: formatTokens(tokens.cacheReadTokens, true) })}; ${t('usage.cacheHitRateTooltip', { rate: cacheHitRate })}`
   const writeTitle = t('usage.cacheCreateTooltip', {
     tokens: formatTokens(tokens.cacheWriteTokens, true),
     m5: formatTokens(tokens.cacheWrite5mTokens, true),
@@ -76,7 +79,7 @@ export function UsageCacheBadges({ log, align = 'end' }: { log: UsageMetricLog; 
       {tokens.cacheReadTokens > 0 && (
         <Badge variant="outline" title={readTitle} aria-label={readTitle} className={`${usageTableBadgeClass} gap-1 border-transparent bg-indigo-500/10 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400`}>
           <DatabaseZap className="size-3.5" aria-hidden="true" />
-          {formatTokens(tokens.cacheReadTokens, true)}
+          {formatTokens(tokens.cacheReadTokens, true)}/{cacheHitRate}
         </Badge>
       )}
       {tokens.cacheWriteTokens > 0 && (

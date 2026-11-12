@@ -1710,6 +1710,7 @@
     "requestShare": "請求占比",
     "tableCached": "快取",
     "cacheReadTooltip": "讀取快取：{{tokens}}",
+    "cacheHitRateTooltip": "快取命中率：{{rate}}（快取讀取 Token / 輸入 Token）",
     "cacheCreateTooltip": "建立快取：{{tokens}}（5 分鐘 {{m5}} · 1 小時 {{h1}}）",
     "claudeInputTooltip": "未快取輸入：{{input}}；總輸入：{{total}}（含讀取快取 {{read}}、建立快取 {{write}}）",
     "totalInputTokens": "總輸入（含快取）",
