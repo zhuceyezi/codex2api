@@ -856,20 +856,19 @@ func (m *Manager) AcquireReusableConnection(
 		if v, ok := m.connections.Load(key); ok {
 			wc := v.(*WsConnection)
 			if canReuseConnection(wc) {
-				if m.hasLiveResponseBinding(wc) {
-					lock.Unlock()
-					continue
-				}
 				if m.probe(wc) {
 					accountLock.Lock()
 					current, exists := m.connections.Load(key)
-					if !exists || current != wc || !canReuseConnection(wc) || m.hasLiveResponseBinding(wc) {
+					if !exists || current != wc || !canReuseConnection(wc) {
 						accountLock.Unlock()
 						lock.Unlock()
 						continue
 					}
 					pr, leaseErr := m.addPendingAndBeginReadLease(wc, slotSession, kind)
 					if leaseErr == nil {
+						// A fresh request replaces the connection's store:false response state.
+						// Do not reserve every idle slot forever for a possible continuation.
+						m.forgetResponseConnBindings(wc)
 						wc.account = account
 						wc.Touch()
 						m.trimIdleAccountConnections(account.ID(), connectionLimit(connectionBudgetKind(wc)), wc)
@@ -1112,6 +1111,18 @@ func (m *Manager) removeResponseConnBindings(wc *WsConnection) {
 	for responseID, binding := range m.respConnBindings {
 		if binding.conn == wc {
 			delete(m.respConnBindings, responseID)
+		}
+	}
+}
+
+// forgetResponseConnBindings retires only previous response IDs, keeping the socket
+// and future bindings usable. Call after reserving a fresh request's exclusive lease.
+func (m *Manager) forgetResponseConnBindings(wc *WsConnection) {
+	m.respConnMu.Lock()
+	defer m.respConnMu.Unlock()
+	for id, binding := range m.respConnBindings {
+		if binding.conn == wc {
+			delete(m.respConnBindings, id)
 		}
 	}
 }

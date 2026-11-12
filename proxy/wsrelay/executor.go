@@ -226,8 +226,10 @@ func (e *Executor) ExecuteRequestViaWebsocket(
 	// 取连耗时（busy 排队 + 探活 + 握手）计入本 attempt 的 ws_acquire_ms（issue #413）
 	acquireElapsed := time.Since(acquireStart)
 	proxy.AddWsAcquireDuration(ctx, acquireElapsed)
-	if acquireElapsed >= time.Second {
-		reused := wc != nil && wc.createdAt > 0 && wc.createdAt < acquireStart.UnixNano()
+	reused := wc != nil && wc.createdAt > 0 && wc.createdAt < acquireStart.UnixNano()
+	if err2 == nil && reused {
+		log.Printf("[WS] 复用连接 account=%d connection=%p acquire_ms=%d", account.ID(), wc, acquireElapsed.Milliseconds())
+	} else if acquireElapsed >= time.Second {
 		log.Printf("[WS] 慢取连 account=%d acquire_ms=%d reused=%t success=%t", account.ID(), acquireElapsed.Milliseconds(), reused, err2 == nil)
 	}
 	if err2 != nil {

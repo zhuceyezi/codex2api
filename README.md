@@ -25,6 +25,12 @@ Conversation payload retention is on by default for all API keys. In **请求记
 
 Chat Completions, Responses, Anthropic Messages HTTP streams and individual Responses WebSocket turns are captured while forwarding. Payloads are written asynchronously as compressed data in the application database. Reading payloads and changing retention require the existing administrator authentication; API-key self-service routes do not expose content. Authentication headers are not stored. Prompts and replies themselves can contain confidential code and secrets. Each input/output is capped at 8 MiB and visibly marked if truncated. Multipart binary attachments are not retained. Database backups may retain older copies until backup rotation.
 
+## Upstream WebSocket reuse
+
+Stateless requests reuse healthy idle connections within the existing account, API-key, model, client-identity and transport partitions, including connections that completed a previous response. Each connection handles one active response at a time. Request payload and prompt-cache isolation still apply.
+
+An explicit `previous_response_id` first selects its original connection. Starting an independent request on a reusable connection retires its old response binding because `store:false` only preserves the latest response there. Clients must be able to replay conversation input if an older continuation is unavailable. Existing idle and maximum-age limits still rotate connections.
+
 ## Maintaining this fork
 
 The Aleafy deployment runs `ops/sync_deploy.py` daily at 04:30 Asia/Shanghai. It fetches `upstream/main`, merges it into the fork, applies `ops/repo_policy.py`, builds the frontend and backend, starts an isolated empty-database health check, pushes the integration, and deploys. Code conflicts or failed builds stop the update without replacing the running service. Failed starts restore both the executable and SQLite database. Only the most recent two deployment backups are retained.
