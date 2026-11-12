@@ -64,3 +64,18 @@ func (h *Handler) beginPendingUsage(c *gin.Context, body []byte, websocket bool)
 	progress.mu.Unlock()
 	return func() { progress.close(c.Request.Context()); h.db.FinishPendingUsage(requestID) }
 }
+
+// Freeze the same response-start timestamp used by the live projection before
+// the existing WS-acquire adjustment is applied to the settled log.
+func populatePendingFirstTokenFromRequest(c *gin.Context, input *database.UsageLogInput) {
+	if c == nil || c.Request == nil || input == nil || input.IsRetryAttempt {
+		return
+	}
+	if progress := progressFromContext(c.Request.Context()); progress != nil {
+		progress.mu.Lock()
+		if progress.input.FirstTokenMs > 0 {
+			input.FirstTokenMs = progress.input.FirstTokenMs
+		}
+		progress.mu.Unlock()
+	}
+}

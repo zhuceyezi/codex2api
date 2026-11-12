@@ -428,7 +428,7 @@ func forwardGeminiNativeStreamGuarded(c *gin.Context, body io.Reader, startedAt 
 			}
 		}
 		usage.observe(data)
-		if result.firstTokenMs == 0 && !startedAt.IsZero() && geminiNativeHasContent(data) {
+		if result.firstTokenMs == 0 && !startedAt.IsZero() && isUpstreamResponseStartResult(gjson.ParseBytes(data)) {
 			result.firstTokenMs = max(int(time.Since(startedAt).Milliseconds()), 1)
 		}
 		frame := "data: " + string(data) + "\n\n"

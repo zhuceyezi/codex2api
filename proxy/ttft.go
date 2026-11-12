@@ -40,7 +40,7 @@ func isFirstTokenEvent(eventType string) bool {
 }
 
 // isPreContentLifecycleEvent 识别不含模型产出的 response.created / in_progress。
-// 宽松首字统计排除这些帧；下游提交与首内容前重试另由 isFirstTokenResult 判断，
+// 下游提交与首内容前重试由 isFirstTokenResult 判断，
 // 不能用这个生命周期分类决定结构帧是否应立即下发。
 func isPreContentLifecycleEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
@@ -82,9 +82,30 @@ func isFirstTokenResult(parsed gjson.Result) bool {
 	return isFirstTokenEvent(eventType)
 }
 
-// isLooseFirstTokenResult 是首字统计的唯一口径（宽松首字）：response.created /
-// in_progress 之外的首个非终态响应事件即记为首字，结构帧也算。严格判定
-// isFirstTokenResult 仍用于断流重试的 contentTokenSeen 等内容感知逻辑。
+// isUpstreamResponseStartResult measures when the upstream starts responding,
+// independent of generated token counts. Lifecycle/start frames count; errors,
+// heartbeats and unrelated connection metadata do not.
+func isUpstreamResponseStartResult(parsed gjson.Result) bool {
+	if !parsed.IsObject() || (parsed.Get("error").Exists() && parsed.Get("error").Type != gjson.Null) || (parsed.Get("response.error").Exists() && parsed.Get("response.error").Type != gjson.Null) {
+		return false
+	}
+	kind := strings.TrimSpace(parsed.Get("type").String())
+	switch kind {
+	case "error", "response.error", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
+		return false
+	}
+	if strings.HasPrefix(kind, "response.") {
+		return true
+	}
+	switch kind {
+	case "message_start", "content_block_start", "content_block_delta", "message_delta":
+		return true
+	}
+	return len(parsed.Get("choices").Array()) > 0 || len(parsed.Get("candidates").Array()) > 0 || parsed.Get("usageMetadata").IsObject() || parsed.Get("result.response").IsObject()
+}
+
+// isLooseFirstTokenResult classifies legacy post-start events. Usage timing
+// uses isUpstreamResponseStartResult; retry boundaries use isFirstTokenResult.
 func isLooseFirstTokenResult(parsed gjson.Result) bool {
 	eventType := strings.TrimSpace(parsed.Get("type").String())
 	if eventType == "" || isPreContentLifecycleEvent(eventType) {

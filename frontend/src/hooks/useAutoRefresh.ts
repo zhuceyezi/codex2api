@@ -55,17 +55,21 @@ export function useAutoRefresh(
         if (pending && !stopped) requestRefresh()
       }
     }
-    const requestRefresh = () => {
+    const requestRefresh = (immediate = false) => {
       pending = true
-      if (!available() || eventTimer !== undefined) return
+      if (!available()) return
+      if (immediate) {
+        window.clearTimeout(eventTimer)
+        eventTimer = undefined
+      } else if (eventTimer !== undefined) return
       const minInterval = optionsRef.current.minEventIntervalMs ?? 1500
       eventTimer = window.setTimeout(() => {
         eventTimer = undefined
         void run()
-      }, Math.max(0, lastRefresh + minInterval - Date.now()))
+      }, immediate ? 0 : Math.max(0, lastRefresh + minInterval - Date.now()))
     }
-    const unsubscribe = subscribeLiveData((topics) => {
-      if (topics.some((topic) => topicKey.split(',').includes(topic))) requestRefresh()
+    const unsubscribe = subscribeLiveData((topics, immediate) => {
+      if (topics.some((topic) => topicKey.split(',').includes(topic))) requestRefresh(immediate)
     }, (ready) => {
       connected = ready
       schedule()

@@ -2762,6 +2762,7 @@
     "tableDuration": "总耗时",
     "tableTiming": "用时",
     "tableTimingHint": "首字（蓝胶囊）= 到上游产出第一个真实内容 token 的时间；耗时（紫胶囊）= 整次请求总时长。数值色：绿良好 / 琥珀偏慢 / 红偏慢（各自独立判定）。推理模型首字接近总耗时属正常。",
+    "responseStartHint": "按收到上游首个有效响应帧计时，包含开始响应事件",
     "timingFirst": "首字",
     "timingDuration": "耗时",
     "tableTime": "时间",

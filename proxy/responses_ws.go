@@ -1211,9 +1211,9 @@ func (h *Handler) streamResponsesWSUpstream(
 	var usage *UsageInfo
 	var actualServiceTier string
 	ttftRecorded := false
-	// contentTokenSeen 用严格判定（与宽松首字统计无关）。宽松口径下
-	// codex.rate_limits / metadata 会置位 ttftRecorded；本机 2004 还开了
-	// preflight passthrough，这两帧会先写出并置位 wroteAnyBody。若用它们做
+	// contentTokenSeen 用严格判定，与上游开始响应时间分开记录。
+	// response.created 等起始帧会置位 ttftRecorded；启用
+	// preflight passthrough 时它们会先写出并置位 wroteAnyBody。若用它们做
 	// 「首包前」判断，previous_response_not_found 降级在真实上游上永远进不去（#541）。
 	contentTokenSeen := false
 	preflightSettings := CurrentRuntimeSettings()
@@ -1329,7 +1329,7 @@ func (h *Handler) streamResponsesWSUpstream(
 		// terminalFailurePayload 取改写前的原始 data，不受影响。
 		clientData = sanitizeCapacityShedEventForClient(eventType, clientData)
 		ttftGuard.MarkProgress(eventType)
-		isFirstToken := isLooseFirstTokenResult(parsed)
+		isFirstToken := isUpstreamResponseStartResult(parsed)
 		if !ttftRecorded && isFirstToken {
 			firstTokenMs = int(time.Since(start).Milliseconds())
 			ttftRecorded = true
@@ -1515,7 +1515,7 @@ func (h *Handler) streamResponsesWSUpstream(
 	} else if len(terminalFailurePayload) > 0 && terminalFailureEventType == "" {
 		terminalFailureEventType = gjson.GetBytes(terminalFailurePayload, "type").String()
 	}
-	if ttftGuard.TimedOut() && !ttftRecorded && !gotTerminal {
+	if ttftGuard.TimedOut() && !gotTerminal {
 		outcome = firstTokenTimeoutOutcome(currentFirstTokenTimeout())
 	}
 	ttftGuard.Stop()

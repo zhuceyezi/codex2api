@@ -44,8 +44,10 @@ func (t Topics) Names() []string {
 }
 
 type Subscription struct {
-	keyID   int64
-	pending Topics
+	keyID     int64
+	pending   Topics
+	urgent    bool
+	immediate chan struct{}
 }
 
 var bus = struct {
@@ -56,7 +58,7 @@ var bus = struct {
 // A zero keyID is an admin subscription. Public subscriptions only receive
 // changes to their own key, including no notifications of other users' traffic.
 func Subscribe(keyID int64) (*Subscription, func()) {
-	s := &Subscription{keyID: keyID}
+	s := &Subscription{keyID: keyID, immediate: make(chan struct{}, 1)}
 	bus.Lock()
 	bus.subscribers[s] = struct{}{}
 	bus.Unlock()
@@ -77,10 +79,33 @@ func Publish(topics Topics, keyID int64) {
 		}
 	}
 }
-func (s *Subscription) Take() Topics {
+
+// PublishImmediate wakes sockets for a one-time milestone, bypassing periodic
+// invalidation batching while retaining the same key-scoped visibility.
+func PublishImmediate(topics Topics, keyID int64) {
 	bus.Lock()
 	defer bus.Unlock()
-	pending := s.pending
+	for s := range bus.subscribers {
+		if s.keyID == 0 || (keyID > 0 && s.keyID == keyID) {
+			s.pending |= topics
+			s.urgent = true
+			select {
+			case s.immediate <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+func (s *Subscription) Immediate() <-chan struct{} { return s.immediate }
+func (s *Subscription) TakeUpdate() (Topics, bool) {
+	bus.Lock()
+	defer bus.Unlock()
+	pending, urgent := s.pending, s.urgent
 	s.pending = 0
-	return pending
+	s.urgent = false
+	select {
+	case <-s.immediate:
+	default:
+	}
+	return pending, urgent
 }

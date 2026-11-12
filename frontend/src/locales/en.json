@@ -2762,6 +2762,7 @@
     "tableDuration": "Duration",
     "tableTiming": "Latency",
     "tableTimingHint": "First (blue pill) = time to the first real content token; Total (violet pill) = end-to-end duration. Value color: green good / amber slow / red very slow (each metric judged independently). Reasoning models often have first-token close to total duration.",
+    "responseStartHint": "Measured at the first valid upstream response frame, including start events",
     "timingFirst": "First",
     "timingDuration": "Total",
     "tableTime": "Time",

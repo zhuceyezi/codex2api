@@ -123,7 +123,7 @@ export function TimingCell({ log }: { log: UsageMetricLog }) {
   const firstLabel = firstMs > 0 ? formatLatencyMs(firstMs) : '-'
   const durationLabel = durationMs > 0 ? formatLatencyMs(durationMs) : '-'
   const title = [
-    firstMs > 0 ? `${t('usage.timingFirst')}: ${firstLabel}` : null,
+    firstMs > 0 ? `${t('usage.timingFirst')}: ${firstLabel} (${t('usage.responseStartHint')})` : null,
     durationMs > 0 ? `${t('usage.timingDuration')}: ${durationLabel}` : null,
   ]
     .filter(Boolean)

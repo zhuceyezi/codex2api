@@ -115,12 +115,12 @@ func (h *Handler) LiveDataSocket(c *gin.Context) {
 	}()
 	sub, unsubscribe := liveupdates.Subscribe(ticket.keyID)
 	defer unsubscribe()
-	send := func(kind string, topics liveupdates.Topics) error {
+	send := func(kind string, topics liveupdates.Topics, immediate bool) error {
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		return conn.WriteJSON(gin.H{"type": kind, "topics": topics.Names(), "at": time.Now().UTC().Format(time.RFC3339Nano)})
+		return conn.WriteJSON(gin.H{"type": kind, "topics": topics.Names(), "immediate": immediate, "at": time.Now().UTC().Format(time.RFC3339Nano)})
 	}
 	h.syncLiveAccountCaches()
-	if err := send("ready", liveupdates.All); err != nil {
+	if err := send("ready", liveupdates.All, false); err != nil {
 		return
 	}
 	ticker := time.NewTicker(time.Second)
@@ -132,9 +132,19 @@ func (h *Handler) LiveDataSocket(c *gin.Context) {
 			return
 		case <-c.Request.Context().Done():
 			return
+		case <-sub.Immediate():
+			topics, immediate := sub.TakeUpdate()
+			if topics&liveupdates.Accounts != 0 {
+				h.syncLiveAccountCaches()
+			}
+			if topics != 0 {
+				if err := send("invalidate", topics, immediate); err != nil {
+					return
+				}
+			}
 		case <-ticker.C:
 			ticks++
-			topics := sub.Take()
+			topics, immediate := sub.TakeUpdate()
 			if topics&liveupdates.Accounts != 0 {
 				h.syncLiveAccountCaches()
 			}
@@ -158,7 +168,7 @@ func (h *Handler) LiveDataSocket(c *gin.Context) {
 				}
 			}
 			if topics != 0 {
-				if err := send("invalidate", topics); err != nil {
+				if err := send("invalidate", topics, immediate); err != nil {
 					return
 				}
 			}

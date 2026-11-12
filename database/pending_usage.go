@@ -277,6 +277,7 @@ func (db *DB) UpdatePendingUsageProgress(requestID string, input UsageLogInput, 
 		db.pendingUsageMu.Unlock()
 		return
 	}
+	firstTokenArrived := p.log.FirstTokenMs == 0 && input.FirstTokenMs > 0
 	p.log.ProgressAvailable = true
 	p.log.UsageEstimated = estimated
 	p.log.ProgressUpdatedAt = time.Now()
@@ -341,5 +342,9 @@ func (db *DB) UpdatePendingUsageProgress(requestID string, input UsageLogInput, 
 	p.log.populateBillingBreakdown()
 	keyID := p.log.APIKeyID
 	db.pendingUsageMu.Unlock()
-	liveupdates.Publish(liveupdates.Requests, keyID)
+	if firstTokenArrived {
+		liveupdates.PublishImmediate(liveupdates.Requests, keyID)
+	} else {
+		liveupdates.Publish(liveupdates.Requests, keyID)
+	}
 }

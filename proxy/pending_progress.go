@@ -153,6 +153,7 @@ func (p *pendingProgress) observe(ctx context.Context, raw []byte) {
 	if p.closed {
 		return
 	}
+	firstTokenWasUnknown := p.input.FirstTokenMs == 0
 	kind := root.Get("type").String()
 	output, reasoning := "", ""
 	switch kind {
@@ -212,9 +213,11 @@ func (p *pendingProgress) observe(ctx context.Context, raw []byte) {
 			p.reasoningKnown = true
 			p.reasoningActual = false
 		}
-		if p.input.FirstTokenMs == 0 {
-			p.input.FirstTokenMs = max(1, int(time.Since(p.started).Milliseconds()))
-		}
+	}
+	// Share the settled statistic: the first upstream response frame counts,
+	// even when text or reasoning has not begun.
+	if firstTokenWasUnknown && isUpstreamResponseStartResult(root) {
+		p.input.FirstTokenMs = max(1, int(time.Since(p.started).Milliseconds()))
 	}
 	usage := root.Get("response.usage")
 	if !usage.Exists() {
@@ -328,7 +331,11 @@ func (p *pendingProgress) observe(ctx context.Context, raw []byte) {
 		p.input.ErrorMessage = security.MaskSensitiveData(security.SafeTruncate(errorMessage, 600))
 		p.input.UpstreamErrorKind = "upstream_error"
 	}
-	p.scheduleLocked(ctx)
+	if firstTokenWasUnknown && p.input.FirstTokenMs > 0 {
+		p.pushLocked(ctx)
+	} else {
+		p.scheduleLocked(ctx)
+	}
 }
 
 type pendingProgressBody struct {

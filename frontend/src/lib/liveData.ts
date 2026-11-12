@@ -1,7 +1,7 @@
 import { api, getAdminKey } from '../api'
 
 export type LiveDataTopic = 'usage' | 'accounts' | 'keys' | 'proxies' | 'settings' | 'runtime' | 'requests'
-type EventListener = (topics: LiveDataTopic[]) => void
+type EventListener = (topics: LiveDataTopic[], immediate?: boolean) => void
 type StatusListener = (connected: boolean) => void
 interface Listener { event: EventListener; status: StatusListener }
 
@@ -78,7 +78,7 @@ class LiveDataConnection {
           armWatchdog()
           this.attempts = 0
           this.status(true)
-          for (const listener of this.listeners) listener.event(message.topics)
+          for (const listener of this.listeners) listener.event(message.topics, message.immediate === true)
         } catch { /* Ignore malformed frames; watchdog reconnects a stale socket. */ }
       }
       socket.onclose = () => {
