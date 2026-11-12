@@ -81,6 +81,32 @@ def smoke(binary, version, directory):
                 process.wait()
 
 
+def wait_for_idle(secret, timeout=600, quiet_seconds=5):
+    if not secret:
+        raise RuntimeError('Admin authentication is required to check active requests; deployment skipped')
+    deadline = time.monotonic() + timeout
+    quiet_since = None
+    previous_active = None
+    while time.monotonic() < deadline:
+        accounts = http_json('http://127.0.0.1:8080/api/admin/runtime-status', secret).get('accounts', {})
+        active = accounts.get('active_requests')
+        if accounts.get('status') == 'error' or not isinstance(active, int) or active < 0:
+            raise RuntimeError('Active request count is unavailable; deployment skipped')
+        now = time.monotonic()
+        if active != previous_active:
+            logging.info('Waiting for idle deployment window: active_requests=%d', active)
+            previous_active = active
+        if active:
+            quiet_since = None
+        elif quiet_since is None:
+            quiet_since = now
+        elif now - quiet_since >= quiet_seconds:
+            logging.info('No active model requests for %s seconds; proceeding with deployment', quiet_seconds)
+            return
+        time.sleep(1)
+    raise RuntimeError('No idle deployment window within 10 minutes; running service preserved')
+
+
 def deploy(binary, version):
     current = http_json('http://127.0.0.1:8080/health')['build_version']
     env = dict(line.split('=', 1) for line in (INSTALL/'.env').read_text().splitlines() if line and not line.startswith('#') and '=' in line)
@@ -89,6 +115,7 @@ def deploy(binary, version):
     database = Path(env['DATABASE_PATH'])
     if not database.is_absolute():
         database = INSTALL/database
+    wait_for_idle(env.get('ADMIN_SECRET'))
     backup = STATE/'backups'/(datetime.now().strftime('%Y%m%d-%H%M%S') + '-' + current)
     backup.mkdir(parents=True, mode=0o700)
     shutil.copy2(INSTALL/'codex2api', backup/'codex2api')

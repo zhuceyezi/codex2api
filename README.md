@@ -33,7 +33,7 @@ An explicit `previous_response_id` first selects its original connection. Starti
 
 ## Maintaining this fork
 
-The Aleafy deployment runs `ops/sync_deploy.py` daily at 04:30 Asia/Shanghai. It fetches `upstream/main`, merges it into the fork, applies `ops/repo_policy.py`, builds the frontend and backend, starts an isolated empty-database health check, pushes the integration, and deploys. Code conflicts or failed builds stop the update without replacing the running service. Failed starts restore both the executable and SQLite database. Only the most recent two deployment backups are retained.
+The Aleafy deployment runs `ops/sync_deploy.py` daily at 04:30 Asia/Shanghai. It fetches `upstream/main`, merges it into the fork, applies `ops/repo_policy.py`, builds the frontend and backend, starts an isolated empty-database health check, pushes the integration, and deploys. Before stopping the service, deployment waits for five consecutive seconds without active model requests. If traffic does not leave an idle window within ten minutes, or request counters cannot be read, deployment stops and preserves the running service. This reduces interrupted generations; the single-instance restart still has a short availability gap. Code conflicts or failed builds stop the update without replacing the running service. Failed starts restore both the executable and SQLite database. Only the most recent two deployment backups are retained.
 
 ```bash
 python3 /home/aleafy/code/codex2api-fork/ops/sync_deploy.py
