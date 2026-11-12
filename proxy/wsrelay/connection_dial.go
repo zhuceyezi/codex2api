@@ -2,8 +2,10 @@ package wsrelay
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/codex2api/auth"
 	"github.com/codex2api/proxy"
@@ -30,7 +32,11 @@ func (m *Manager) createConnection(ctx context.Context, input connectionDialRequ
 		return nil, err
 	}
 	session, poolKey := m.newDialSession(ctx, input)
+	dialStart := time.Now()
 	conn, resp, err := dialer.DialContext(ctx, input.url, input.headers)
+	if elapsed := time.Since(dialStart); elapsed >= time.Second {
+		log.Printf("[WS] 慢握手 account=%d dial_ms=%d success=%t", input.account.ID(), elapsed.Milliseconds(), err == nil)
+	}
 	if err != nil {
 		m.sessions.CompareAndDelete(poolKey, session)
 		session.Close()

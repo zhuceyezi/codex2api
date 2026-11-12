@@ -2444,9 +2444,7 @@ export default function Usage() {
                               <span className="min-w-0 break-all text-left">{log.model || '-'}</span>
                             </Badge>
                           )}
-                          {log.reasoning_effort ? (
-                            <ReasoningEffortBadge effort={log.reasoning_effort} />
-                          ) : null}
+                          <ReasoningEffortBadge effort={log.reasoning_effort} effectiveEffort={log.effective_reasoning_effort} />
                           {visibleColumns.type && isFastTier(log.billing_service_tier || log.service_tier) ? (
                             <Badge
                               variant="outline"
@@ -2681,9 +2679,7 @@ export default function Usage() {
                               )}
                               {log.model || '-'}
                             </Badge>
-                            {log.reasoning_effort ? (
-                              <ReasoningEffortBadge effort={log.reasoning_effort} />
-                            ) : null}
+                            <ReasoningEffortBadge effort={log.reasoning_effort} effectiveEffort={log.effective_reasoning_effort} />
                             {isImageUsageLog(log) && (
                               <ImageUsageBadge log={log} />
                             )}

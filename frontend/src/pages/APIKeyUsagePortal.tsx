@@ -1474,7 +1474,7 @@ function RecentLogsTable({
                 <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                   <LogStatusBadge code={log.status_code} onFilter={filterStatus} compact />
                   <LogModelBadge log={log} active={filter.model === log.model} onToggle={toggleModel} compact />
-                  <ReasoningEffortBadge effort={log.reasoning_effort} />
+                  <ReasoningEffortBadge effort={log.reasoning_effort} effectiveEffort={log.effective_reasoning_effort} />
                   {log.effective_model && log.effective_model !== log.model ? (
                     <Badge variant="outline" className="border-transparent bg-blue-500/10 text-[11px] font-medium text-blue-600 dark:bg-blue-500/20 dark:text-blue-400">→ {log.effective_model}</Badge>
                   ) : null}
@@ -1546,7 +1546,7 @@ function RecentLogsTable({
                         <Badge variant="outline" className="border-transparent bg-cyan-500/12 text-[11px] font-semibold uppercase text-cyan-600 dark:bg-cyan-500/20 dark:text-cyan-400">ws</Badge>
                       ) : null}
                       <LogModelBadge log={log} active={filter.model === log.model} onToggle={toggleModel} />
-                      <ReasoningEffortBadge effort={log.reasoning_effort} />
+                      <ReasoningEffortBadge effort={log.reasoning_effort} effectiveEffort={log.effective_reasoning_effort} />
                       {log.effective_model && log.effective_model !== log.model ? (
                         <Badge variant="outline" className="border-transparent bg-blue-500/10 text-[11px] font-medium text-blue-600 dark:bg-blue-500/20 dark:text-blue-400">→ {log.effective_model}</Badge>
                       ) : null}

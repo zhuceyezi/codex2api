@@ -11,13 +11,15 @@ const EFFORT_STYLES: Record<string, string> = {
 }
 const EFFORT_ALIASES: Record<string, string> = { off: 'none', min: 'minimal', med: 'medium', max: 'xhigh' }
 
-export default function ReasoningEffortBadge({ effort }: { effort?: string }) {
-  const label = effort?.trim()
-  if (!label) return null
-  const normalized = label.toLowerCase()
+export default function ReasoningEffortBadge({ effort, effectiveEffort }: { effort?: string; effectiveEffort?: string }) {
+  const requested = effort?.trim() || ''
+  const effective = effectiveEffort?.trim() || ''
+  const changed = effective !== '' && effective !== requested
+  const label = changed ? `${requested || '未传入'} → ${effective}` : requested || effective || '未传入'
+  const normalized = (effective || requested).toLowerCase()
   const style = EFFORT_STYLES[EFFORT_ALIASES[normalized] || normalized] || 'border-transparent bg-muted text-muted-foreground'
   return (
-    <Badge variant="outline" title={`reasoning: ${label}`} className={`text-[11px] font-semibold lowercase tracking-wide ${style}`}>
+    <Badge variant="outline" title={changed ? `请求：${requested || '未传入'}；实际发送：${effective}` : `请求：${label}`} className={`text-[11px] font-semibold lowercase tracking-wide ${style}`}>
       {label}
     </Badge>
   )

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -223,7 +224,12 @@ func (e *Executor) ExecuteRequestViaWebsocket(
 		}
 	}
 	// 取连耗时（busy 排队 + 探活 + 握手）计入本 attempt 的 ws_acquire_ms（issue #413）
-	proxy.AddWsAcquireDuration(ctx, time.Since(acquireStart))
+	acquireElapsed := time.Since(acquireStart)
+	proxy.AddWsAcquireDuration(ctx, acquireElapsed)
+	if acquireElapsed >= time.Second {
+		reused := wc != nil && wc.createdAt > 0 && wc.createdAt < acquireStart.UnixNano()
+		log.Printf("[WS] 慢取连 account=%d acquire_ms=%d reused=%t success=%t", account.ID(), acquireElapsed.Milliseconds(), reused, err2 == nil)
+	}
 	if err2 != nil {
 		return nil, err2
 	}

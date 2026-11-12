@@ -22,12 +22,13 @@ type upstreamTraceAttempt struct {
 }
 
 type upstreamTraceSnapshot struct {
-	RequestID         string
-	accountID         int64
-	UpstreamRequestID string
-	Proxy             auth.ProxyAuditLabel
-	InjectedTurnState string
-	UpstreamTurnState string
+	EffectiveReasoningEffort string
+	RequestID                string
+	accountID                int64
+	UpstreamRequestID        string
+	Proxy                    auth.ProxyAuditLabel
+	InjectedTurnState        string
+	UpstreamTurnState        string
 }
 
 func snapshotUpstreamTrace(ctx context.Context) upstreamTraceSnapshot {
@@ -37,7 +38,7 @@ func snapshotUpstreamTrace(ctx context.Context) upstreamTraceSnapshot {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	result := upstreamTraceSnapshot{RequestID: a.requestID}
+	result := upstreamTraceSnapshot{RequestID: a.requestID, EffectiveReasoningEffort: a.effectiveReasoningEffort}
 	if a.current != nil {
 		result.accountID = a.current.accountID
 		result.UpstreamRequestID = a.current.requestID
@@ -49,6 +50,7 @@ func snapshotUpstreamTrace(ctx context.Context) upstreamTraceSnapshot {
 
 func (s upstreamTraceSnapshot) apply(input *database.UsageLogInput) {
 	input.RequestID = s.RequestID
+	input.EffectiveReasoningEffort = s.EffectiveReasoningEffort
 	if s.accountID == input.AccountID {
 		input.UpstreamRequestID = s.UpstreamRequestID
 		input.UpstreamProxyID = s.Proxy.ID
@@ -59,10 +61,11 @@ func (s upstreamTraceSnapshot) apply(input *database.UsageLogInput) {
 }
 
 type upstreamTraceAudit struct {
-	mu        sync.Mutex
-	requestID string
-	store     *auth.Store
-	current   *upstreamTraceAttempt
+	effectiveReasoningEffort string
+	mu                       sync.Mutex
+	requestID                string
+	store                    *auth.Store
+	current                  *upstreamTraceAttempt
 }
 
 func upstreamTraceFromContext(ctx context.Context) *upstreamTraceAudit {
@@ -89,6 +92,7 @@ func resetUpstreamRequestTrace(c *gin.Context) {
 	if a := upstreamTraceFromContext(c.Request.Context()); a != nil {
 		a.mu.Lock()
 		a.requestID = NewUpstreamSessionUUID()
+		a.effectiveReasoningEffort = ""
 		a.current = nil
 		a.mu.Unlock()
 	}
@@ -187,10 +191,20 @@ func populateUpstreamTrace(c *gin.Context, input *database.UsageLogInput) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	input.RequestID = a.requestID
+	input.EffectiveReasoningEffort = a.effectiveReasoningEffort
 	if current := a.current; current != nil && current.accountID == input.AccountID {
 		input.UpstreamRequestID = current.requestID
 		input.UpstreamProxyID = current.proxy.ID
 		input.UpstreamProxyName = current.proxy.Name
 		input.UpstreamTurnState = current.upstreamTurnState
+	}
+}
+
+// noteEffectiveReasoningEffort records the effort after payload rules for both transports.
+func noteEffectiveReasoningEffort(ctx context.Context, effort string) {
+	if a := upstreamTraceFromContext(ctx); a != nil {
+		a.mu.Lock()
+		a.effectiveReasoningEffort = effort
+		a.mu.Unlock()
 	}
 }

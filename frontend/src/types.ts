@@ -3643,6 +3643,7 @@ export interface UsageLog {
   first_token_ms: number
   ws_acquire_ms?: number
   reasoning_effort: string
+  effective_reasoning_effort?: string
   inbound_endpoint: string
   upstream_endpoint: string
   stream: boolean
@@ -4111,6 +4112,7 @@ export interface PublicAPIKeyUsageLog {
   output_tokens: number
   reasoning_tokens: number
   reasoning_effort: string
+  effective_reasoning_effort?: string
   cached_tokens: number
   cache_write_5m_tokens?: number
   cache_write_1h_tokens?: number
