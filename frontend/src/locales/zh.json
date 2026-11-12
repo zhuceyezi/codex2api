@@ -2674,6 +2674,8 @@
     "reason7dUrgency": "7d 快重置"
   },
   "usage": {
+    "estimated": "估算",
+    "liveEstimateHint": "执行中按上游用量或可见流式内容估算；无法观察的隐藏思考不按时长推算，结束后以实际统计为准。",
     "running": "执行中",
     "pendingMetrics": "请求完成后统计",
     "runningCount": "执行中 {{count}} 条",

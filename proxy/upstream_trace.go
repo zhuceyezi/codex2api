@@ -144,6 +144,9 @@ func beginUpstreamTrace(ctx context.Context, account *auth.Account, proxyURL str
 	}
 	header := account.GetUpstreamRequestIDHeader()
 	return func(resp *http.Response) {
+		if resp != nil {
+			resp.Body = observePendingResponse(ctx, resp.Body)
+		}
 		if resp == nil || ws {
 			return
 		} // A WS handshake ID is not a per-turn ID; WS turn state arrives per frame, see ObserveCodexTurnStateFrame.
@@ -186,6 +189,7 @@ func noteUpstreamTurnState(ctx context.Context, state string) {
 
 func doTracedUpstreamRequest(client *http.Client, req *http.Request, account *auth.Account, proxyURL string) (*http.Response, error) {
 	record := beginUpstreamTrace(req.Context(), account, proxyURL, false)
+	updatePendingUpstreamRequest(req.Context(), req)
 	resp, err := client.Do(req)
 	record(resp)
 	return resp, err
@@ -220,5 +224,6 @@ func noteEffectiveReasoningEffort(ctx context.Context, effort string) {
 		a.mu.Lock()
 		a.effectiveReasoningEffort = effort
 		a.mu.Unlock()
+		notifyPendingProgress(ctx)
 	}
 }

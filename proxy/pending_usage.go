@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"github.com/codex2api/api"
 	"github.com/codex2api/database"
 	"github.com/gin-gonic/gin"
@@ -44,7 +45,22 @@ func (h *Handler) beginPendingUsage(c *gin.Context, body []byte, websocket bool)
 	populateAPIKeyMetaFromContext(c, input)
 	populateClientIPFromRequest(c, input)
 	populateUserAgentMetaFromRequest(c, input)
-	row := database.UsageLog{RequestID: requestID, Model: model, EffectiveModel: model, Stream: stream, ViaWebsocket: websocket, Endpoint: input.Endpoint, InboundEndpoint: input.InboundEndpoint, ClientIP: input.ClientIP, ClientUserAgent: input.ClientUserAgent, APIKeyID: input.APIKeyID, APIKeyName: input.APIKeyName, APIKeyMasked: input.APIKeyMasked, CreatedAt: time.Now(), ReasoningEffort: gjson.GetBytes(body, "reasoning.effort").String(), ServiceTier: gjson.GetBytes(body, "service_tier").String()}
+	populateCompactUsageMetaFromRequest(c, input)
+	populateUltraUsageMetaFromRequest(c, input)
+	row := database.UsageLog{RequestID: requestID, Model: model, EffectiveModel: model, Stream: stream, ViaWebsocket: websocket, Endpoint: input.Endpoint, InboundEndpoint: input.InboundEndpoint, ClientIP: input.ClientIP, ClientUserAgent: input.ClientUserAgent, APIKeyID: input.APIKeyID, APIKeyName: input.APIKeyName, APIKeyMasked: input.APIKeyMasked, CreatedAt: time.Now(), ReasoningEffort: firstPendingString(gjson.ParseBytes(body), "reasoning.effort", "reasoning_effort"), ServiceTier: gjson.GetBytes(body, "service_tier").String()}
+	row.Ultra = input.Ultra
+	row.HasCompactionHistory = input.HasCompactionHistory
+	row.Compact = strings.Contains(row.Endpoint, "/compact")
+	row.RequestedServiceTier = row.ServiceTier
 	h.db.BeginPendingUsage(row)
-	return func() { h.db.FinishPendingUsage(requestID) }
+	progress := &pendingProgress{db: h.db, requestID: requestID, started: row.CreatedAt, input: *input, estimated: true}
+	progress.input.InputTokens = estimatePendingInput(gjson.ParseBytes(body))
+	progress.input.ServiceTier = row.ServiceTier
+	progress.input.RequestedServiceTier = row.ServiceTier
+	progress.input.ReasoningEffort = row.ReasoningEffort
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), pendingProgressKey{}, progress))
+	progress.mu.Lock()
+	progress.pushLocked(c.Request.Context())
+	progress.mu.Unlock()
+	return func() { progress.close(c.Request.Context()); h.db.FinishPendingUsage(requestID) }
 }

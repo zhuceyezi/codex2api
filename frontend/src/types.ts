@@ -3597,6 +3597,11 @@ export interface APIKeyAccountStatsResponse {
 export type UserBillingMode = 'token' | 'per_image' | 'per_video' | 'per_second'
 
 export interface UsageLog {
+  progress_available?: boolean
+  usage_estimated?: boolean
+  reasoning_tokens_known?: boolean
+  progress_updated_at?: string
+  tokens_per_second?: number
   request_state?: 'running' | 'completed'
   /** Generated video duration (seconds) on Grok video settlement rows. */
   video_seconds?: number

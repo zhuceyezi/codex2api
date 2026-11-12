@@ -652,6 +652,7 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 			traceProxy = account.ProxyURL
 			account.Mu().RUnlock()
 		}
+		updatePendingPayload(ctx, requestBody)
 		recordTrace := beginUpstreamTrace(ctx, account, traceProxy, true)
 		resp, err := WebsocketExecuteFunc(ctx, account, requestBody, sessionID, proxyOverride, apiKey, deviceCfg, headers, poolRouteKey)
 		recordTrace(resp)

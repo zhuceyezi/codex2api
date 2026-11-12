@@ -4319,6 +4319,12 @@ func (db *DB) RebindAccountProxyURLs(ctx context.Context, oldURL, newURL string)
 
 // UsageLog 请求日志行
 type UsageLog struct {
+	ReasoningTokensKnown bool      `json:"reasoning_tokens_known,omitempty"`
+	ProgressAvailable    bool      `json:"progress_available,omitempty"`
+	UsageEstimated       bool      `json:"usage_estimated,omitempty"`
+	ProgressUpdatedAt    time.Time `json:"progress_updated_at,omitempty"`
+	TokensPerSecond      float64   `json:"tokens_per_second,omitempty"`
+
 	RequestState string `json:"request_state,omitempty"`
 	UserBilling
 	RequestID            string `json:"request_id"`

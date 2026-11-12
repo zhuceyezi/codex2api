@@ -1,3 +1,4 @@
+import AnimatedUsageLog from '../components/AnimatedUsageLog'
 import { mergePendingUsage, usageRowKeys } from '../lib/pendingUsage'
 import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { ConversationDetails, ConversationRetentionSettings } from '../components/ConversationDetails'
@@ -405,7 +406,7 @@ function formatServiceTierLabel(t: ReturnType<typeof useTranslation>['t'], tier?
 
 function UsageCostCell({ log }: { log: UsageLog }) {
   const { t } = useTranslation()
-  if (log.request_state === 'running') return <span className="text-muted-foreground" title={t('usage.pendingMetrics')}>—</span>
+  if (log.request_state === 'running' && (!log.progress_available || mediaBillingUnit(log.effective_model || log.model))) return <span className="text-muted-foreground" title={t('usage.pendingMetrics')}>—</span>
   const mediaUnit = mediaBillingUnit(log.effective_model || log.model)
   const mode = log.user_billing_mode || ''
   if (mode === 'per_image' || mode === 'per_video' || mode === 'per_second') return <ImageBillingCost mode={mode} media={mediaUnit !== ''} count={log.billed_image_count} unitPrice={log.image_unit_price} userBilled={log.user_billed} accountBilled={log.account_billed} />
@@ -441,7 +442,7 @@ function UsageCostCell({ log }: { log: UsageLog }) {
           className="group inline-flex cursor-help items-center gap-1.5 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="text-[13px] font-semibold leading-none tabular-nums text-emerald-600 antialiased dark:text-emerald-400">
-            {formatUSD(displayCost)}
+            {log.request_state === 'running' && log.usage_estimated ? '≈' : ''}{formatUSD(displayCost)}
           </span>
           <Info className="size-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-blue-500" />
         </button>
@@ -922,7 +923,7 @@ function StatusCodeBadge({ log }: { log: UsageLog }) {
   if (log.request_state === 'running') {
     return <Badge variant="outline" className={cn(usageTableBadgeClass, 'gap-1.5 border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300')}>
       <span className="size-1.5 rounded-full bg-current motion-safe:animate-pulse" aria-hidden="true" />
-      {t('usage.running')}
+      {t('usage.running')}{log.usage_estimated && <span className="text-[10px] opacity-75" title={t('usage.liveEstimateHint')}>{t('usage.estimated')}</span>}
     </Badge>
   }
   const dotColor = log.status_code === 200
@@ -2426,7 +2427,7 @@ export default function Usage() {
                   const hasDetails = visibleColumns.account || visibleColumns.apiKey || visibleColumns.clientIp || visibleColumns.endpoint || visibleColumns.userAgent
                   const hasMetrics = visibleColumns.token || visibleColumns.cached || visibleColumns.timing || visibleColumns.tokensPerSec || visibleColumns.cost
                   return (
-                    <div
+                    <AnimatedUsageLog key={logRowKeys.get(log.id)} log={log}>{(log) => <div
                       key={logRowKeys.get(log.id)}
                       className={cn("min-w-0 rounded-xl border border-border bg-background/70 p-3.5 shadow-sm", insertedLogKeys.has(logRowKeys.get(log.id)!) && 'usage-log-insert')}
                       data-request-state={log.request_state || 'completed'}
@@ -2559,11 +2560,12 @@ export default function Usage() {
                             <div className="rounded-lg border border-border/70 bg-card/60 px-2.5 py-2">
                               <div className="text-[11px] font-semibold text-muted-foreground">{t('usage.tableToken')}</div>
                               <div className="mt-1 font-mono tabular-nums">
-                                {log.request_state !== 'running' && log.status_code < 400 && (log.input_tokens > 0 || log.output_tokens > 0) ? (
+                                {log.status_code < 400 && (log.input_tokens > 0 || log.output_tokens > 0) ? (
                                   <>
                                     <UsageInputTokenCount log={log} />
                                     <span className="mx-0.5 text-border">/</span>
                                     <span className="text-emerald-500">↑{formatTokens(log.output_tokens, true)}</span>
+                                    {(log.reasoning_tokens > 0 || log.request_state === 'running') && <span className="ml-1 text-amber-500"><Brain className="mr-0.5 inline size-3" />{log.request_state === 'running' && !log.reasoning_tokens_known ? '—' : formatTokens(log.reasoning_tokens, true)}</span>}
                                   </>
                                 ) : (
                                   <span className="text-muted-foreground">-</span>
@@ -2615,7 +2617,7 @@ export default function Usage() {
                           )}
                         </div>
                       )}
-                    </div>
+                    </div>}</AnimatedUsageLog>
                   )
                 })}
               </div>
@@ -2667,7 +2669,7 @@ export default function Usage() {
                   <TableBody>
                     {logs.map((log: UsageLog) => {
                       return (
-                      <TableRow key={logRowKeys.get(log.id)} className={cn(insertedLogKeys.has(logRowKeys.get(log.id)!) && 'usage-log-insert')} data-request-state={log.request_state || 'completed'}>
+                      <AnimatedUsageLog key={logRowKeys.get(log.id)} log={log}>{(log) => <TableRow className={cn(insertedLogKeys.has(logRowKeys.get(log.id)!) && 'usage-log-insert')} data-request-state={log.request_state || 'completed'}>
                         {visibleColumns.status && <TableCell>
                           <div className="flex items-center gap-1.5">
                             <button
@@ -2789,15 +2791,15 @@ export default function Usage() {
                           </div>
                         </TableCell>}
                         {visibleColumns.token && <TableCell className="text-right">
-                          {log.request_state !== 'running' && log.status_code < 400 && (log.input_tokens > 0 || log.output_tokens > 0) ? (
+                          {log.status_code < 400 && (log.input_tokens > 0 || log.output_tokens > 0) ? (
                             <div className={`${usageTableMonoClass} whitespace-nowrap leading-relaxed`}>
                               <UsageInputTokenCount log={log} />
                               <span className="mx-1 text-border">|</span>
                               <span className="text-emerald-500">↑{formatTokens(log.output_tokens, true)}</span>
-                              {log.reasoning_tokens > 0 && (
+                              {(log.reasoning_tokens > 0 || log.request_state === 'running') && (
                                 <>
                                   <span className="mx-1 text-border">|</span>
-                                  <span className="text-amber-500 inline-flex items-center gap-0.5"><Brain className="size-3.5 inline" />{formatTokens(log.reasoning_tokens, true)}</span>
+                                  <span className="text-amber-500 inline-flex items-center gap-0.5"><Brain className="size-3.5 inline" />{log.request_state === 'running' && !log.reasoning_tokens_known ? '—' : formatTokens(log.reasoning_tokens, true)}</span>
                                 </>
                               )}
                             </div>
@@ -2838,7 +2840,7 @@ export default function Usage() {
                           <UsageTimeCell value={log.created_at} />
                         </TableCell>}
                       <TableCell>{log.id > 0 && <ConversationDetails logId={log.id} />}</TableCell>
-                      </TableRow>
+                      </TableRow>}</AnimatedUsageLog>
                       )
                     })}
                   </TableBody>

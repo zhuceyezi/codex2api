@@ -2674,6 +2674,8 @@
     "reason7dUrgency": "7d Reset Soon"
   },
   "usage": {
+    "estimated": "Est.",
+    "liveEstimateHint": "Live values use provider usage or visible stream estimates. Hidden reasoning is not inferred from elapsed time; final usage replaces estimates.",
     "running": "Running",
     "pendingMetrics": "Available when the request completes",
     "runningCount": "{{count}} running",

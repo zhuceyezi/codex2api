@@ -57,6 +57,7 @@ func RecordUpstreamUserAgent(ctx context.Context, userAgent string) {
 		audit.upstreamUserAgent = normalizeUsageLogUserAgent(userAgent)
 		audit.upstreamKnown = true
 		audit.mu.Unlock()
+		notifyPendingProgress(ctx)
 	}
 }
 

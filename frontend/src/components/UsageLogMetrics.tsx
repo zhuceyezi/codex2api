@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { createLucideIcon, DatabaseZap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../lib/utils'
@@ -10,6 +9,10 @@ import UsageTimingBadge from './UsageTimingBadge'
 
 type UsageMetricLog = {
   request_state?: string
+  progress_available?: boolean
+  usage_estimated?: boolean
+  reasoning_tokens_known?: boolean
+  tokens_per_second?: number
   created_at?: string
   channel?: string
   status_code: number
@@ -39,7 +42,7 @@ const DatabasePlus = createLucideIcon('database-plus', [
 
 export function UsageInputTokenCount({ log }: { log: UsageMetricLog }) {
   const { t } = useTranslation()
-  if (log.request_state === 'running') return <span className="text-muted-foreground">—</span>
+  if (log.request_state === 'running' && !log.progress_available) return <span className="text-muted-foreground">—</span>
   const tokens = getUsageTokenBreakdown(log)
   const title = tokens.isClaude
     ? t('usage.claudeInputTooltip', {
@@ -55,7 +58,7 @@ export function UsageInputTokenCount({ log }: { log: UsageMetricLog }) {
 
 export function UsageCacheBadges({ log, align = 'end' }: { log: UsageMetricLog; align?: 'start' | 'end' }) {
   const { t } = useTranslation()
-  if (log.request_state === 'running') return <span className="text-muted-foreground">—</span>
+  if (log.request_state === 'running' && !log.progress_available) return <span className="text-muted-foreground">—</span>
   const tokens = getUsageTokenBreakdown(log)
   if (tokens.cacheReadTokens === 0 && tokens.cacheWriteTokens === 0) {
     return <span className={`${usageTableMonoClass} text-muted-foreground/50`}>-</span>
@@ -95,14 +98,14 @@ function tokensPerSecClassName(value: number): string {
 }
 
 export function TokensPerSecCell({ log }: { log: UsageMetricLog }) {
-  if (log.request_state === 'running') return <span className="text-muted-foreground">—</span>
-  const value = computeOutputTokensPerSec(log)
+  if (log.request_state === 'running' && !log.progress_available) return <span className="text-muted-foreground">—</span>
+  const value = log.request_state === 'running' && log.tokens_per_second !== undefined ? Math.max(0, log.tokens_per_second) : computeOutputTokensPerSec(log)
   if (value == null) {
     return <span className={`${usageTableMonoClass} text-muted-foreground/50`}>-</span>
   }
   return (
     <span className={`${usageTableMonoClass} ${tokensPerSecClassName(value)}`} title={`${value.toFixed(2)} tok/s`}>
-      {formatTokensPerSec(value)}
+      {value === 0 && log.request_state === 'running' ? '0' : formatTokensPerSec(value)}
       <span className="ml-0.5 text-[11px] font-medium opacity-70">tok/s</span>
     </span>
   )
@@ -111,7 +114,6 @@ export function TokensPerSecCell({ log }: { log: UsageMetricLog }) {
 /** 首字 + 总耗时聚合列：横向双色胶囊，避免把整行撑高。 */
 export function TimingCell({ log }: { log: UsageMetricLog }) {
   const { t } = useTranslation()
-  if (log.request_state === 'running') return <RunningDuration log={log} />
   const firstMs = log.first_token_ms || 0
   const durationMs = log.duration_ms || 0
   if (firstMs <= 0 && durationMs <= 0) {
@@ -143,15 +145,4 @@ export function TimingCell({ log }: { log: UsageMetricLog }) {
       />
     </div>
   )
-}
-
-function RunningDuration({ log }: { log: UsageMetricLog }) {
-  const elapsed = () => log.created_at ? Math.max(0, Date.now() - Date.parse(log.created_at)) : log.duration_ms
-  const [duration, setDuration] = useState(elapsed)
-  useEffect(() => {
-    setDuration(elapsed())
-    const timer = window.setInterval(() => { if (!document.hidden) setDuration(elapsed()) }, 1000)
-    return () => window.clearInterval(timer)
-  }, [log.created_at, log.duration_ms])
-  return <span className={`${usageTableMonoClass} text-sky-700 dark:text-sky-300`}>{formatLatencyMs(duration)}</span>
 }

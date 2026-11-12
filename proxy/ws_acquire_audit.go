@@ -58,6 +58,7 @@ func AddWsAcquireDuration(ctx context.Context, d time.Duration) {
 		audit.mu.Lock()
 		audit.total += d
 		audit.mu.Unlock()
+		notifyPendingProgress(ctx)
 	}
 }
 

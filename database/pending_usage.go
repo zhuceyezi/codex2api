@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"github.com/codex2api/internal/liveupdates"
 	"sort"
 	"strings"
@@ -39,16 +40,31 @@ func (db *DB) UpdatePendingUsageAccount(requestID string, accountID int64, chann
 	}
 	db.pendingUsageMu.Lock()
 	p := db.pendingUsage[requestID]
-	var keyID int64
-	if p != nil {
-		p.log.AccountID = accountID
-		p.log.Channel = channel
-		keyID = p.log.APIKeyID
+	if p == nil {
+		db.pendingUsageMu.Unlock()
+		return
 	}
+	same := p.log.AccountID == accountID && (p.log.AccountName != "" || p.log.AccountEmail != "")
+	p.log.AccountID = accountID
+	p.log.Channel = channel
+	keyID := p.log.APIKeyID
 	db.pendingUsageMu.Unlock()
-	if p != nil {
-		liveupdates.Publish(liveupdates.Requests, keyID)
+	if !same {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		var name string
+		var raw interface{}
+		err := db.conn.QueryRowContext(ctx, `SELECT name, credentials FROM accounts WHERE id = $1`, accountID).Scan(&name, &raw)
+		cancel()
+		if err == nil {
+			db.pendingUsageMu.Lock()
+			if current := db.pendingUsage[requestID]; current != nil && current.log.AccountID == accountID {
+				current.log.AccountName = name
+				current.log.AccountEmail = accountEmailFromRawCredentials(raw)
+			}
+			db.pendingUsageMu.Unlock()
+		}
 	}
+	liveupdates.Publish(liveupdates.Requests, keyID)
 }
 func (db *DB) FinishPendingUsage(requestID string) {
 	if db == nil {
@@ -80,6 +96,9 @@ func (db *DB) capturePendingUsage(input *UsageLogInput) uint64 {
 	if p == nil {
 		return 0
 	}
+	p.log.ProgressAvailable = true
+	p.log.UsageEstimated = false
+	p.log.ProgressUpdatedAt = time.Now()
 	p.log.AccountID = input.AccountID
 	p.log.Channel = input.Channel
 	p.log.Model = input.Model
@@ -244,4 +263,83 @@ func pendingUsageMatches(row UsageLog, f UsageLogFilter) bool {
 		}
 	}
 	return true
+}
+
+// UpdatePendingUsageProgress changes only the display projection. It never
+// touches the log buffer, quota counters or the authoritative billing ledger.
+func (db *DB) UpdatePendingUsageProgress(requestID string, input UsageLogInput, estimated bool, rate float64, reasoningKnown bool) {
+	if db == nil {
+		return
+	}
+	db.pendingUsageMu.Lock()
+	p := db.pendingUsage[requestID]
+	if p == nil || p.finished || p.sequence > 0 {
+		db.pendingUsageMu.Unlock()
+		return
+	}
+	p.log.ProgressAvailable = true
+	p.log.UsageEstimated = estimated
+	p.log.ProgressUpdatedAt = time.Now()
+	p.log.TokensPerSecond = rate
+	p.log.ReasoningTokensKnown = reasoningKnown
+	p.log.InputTokens = input.InputTokens
+	p.log.PromptTokens = input.InputTokens
+	p.log.OutputTokens = input.OutputTokens
+	p.log.CompletionTokens = input.OutputTokens
+	p.log.TotalTokens = input.InputTokens + input.OutputTokens
+	p.log.ReasoningTokens = input.ReasoningTokens
+	p.log.CachedTokens = input.CachedTokens
+	p.log.CacheWrite5mTokens = input.CacheWrite5mTokens
+	p.log.CacheWrite1hTokens = input.CacheWrite1hTokens
+	p.log.ImageInputTokens = input.ImageInputTokens
+	p.log.ImageOutputTokens = input.ImageOutputTokens
+	p.log.CachedImageInputTokens = input.CachedImageInputTokens
+	p.log.FirstTokenMs = input.FirstTokenMs
+	p.log.WsAcquireMs = input.WsAcquireMs
+	if input.EffectiveModel != "" {
+		p.log.EffectiveModel = input.EffectiveModel
+	}
+	if input.UpstreamResponseModel != "" {
+		p.log.UpstreamResponseModel = input.UpstreamResponseModel
+		p.log.UpstreamModelMismatch = input.UpstreamModelMismatch
+	}
+	if input.EffectiveReasoningEffort != "" {
+		p.log.EffectiveReasoningEffort = input.EffectiveReasoningEffort
+	}
+	p.log.UpstreamUserAgent = input.UpstreamUserAgent
+	p.log.UserAgentOverridden = input.UserAgentOverridden
+	p.log.UpstreamRequestID = input.UpstreamRequestID
+	p.log.UpstreamProxyID = input.UpstreamProxyID
+	p.log.UpstreamProxyName = input.UpstreamProxyName
+	if input.UpstreamEndpoint != "" {
+		p.log.UpstreamEndpoint = input.UpstreamEndpoint
+	}
+	p.log.InjectedTurnState = input.InjectedTurnState
+	p.log.UpstreamTurnState = input.UpstreamTurnState
+	if input.ActualServiceTier != "" {
+		p.log.ActualServiceTier = input.ActualServiceTier
+	}
+	if input.ServiceTier != "" {
+		p.log.ServiceTier = input.ServiceTier
+	}
+	if input.BillingServiceTier != "" {
+		p.log.BillingServiceTier = input.BillingServiceTier
+	}
+	p.log.Ultra = input.Ultra
+	p.log.HasCompactionHistory = input.HasCompactionHistory
+	if input.ErrorMessage != "" {
+		p.log.ErrorMessage = input.ErrorMessage
+		p.log.UpstreamErrorKind = input.UpstreamErrorKind
+	}
+	costInput := input
+	costInput.Model = p.log.Model
+	costInput.EffectiveModel = p.log.EffectiveModel
+	costInput.DaybreakProgram = p.log.DaybreakProgram
+	costInput.ServiceTier = p.log.ServiceTier
+	p.log.AccountBilled = UsageLogBilledCost(&costInput)
+	p.log.UserBilled = UsageLogUserBilledCost(&costInput)
+	p.log.populateBillingBreakdown()
+	keyID := p.log.APIKeyID
+	db.pendingUsageMu.Unlock()
+	liveupdates.Publish(liveupdates.Requests, keyID)
 }
