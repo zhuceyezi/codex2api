@@ -3597,6 +3597,7 @@ export interface APIKeyAccountStatsResponse {
 export type UserBillingMode = 'token' | 'per_image' | 'per_video' | 'per_second'
 
 export interface UsageLog {
+  request_state?: 'running' | 'completed'
   /** Generated video duration (seconds) on Grok video settlement rows. */
   video_seconds?: number
   user_billing_mode?: '' | UserBillingMode
@@ -3703,6 +3704,7 @@ export interface UsageLog {
 export type UsageLogsResponse = ApiListResponse<'logs', UsageLog>
 
 export interface UsageLogsPagedResponse {
+  pending_logs?: UsageLog[]
   logs: UsageLog[]
   total: number
 }

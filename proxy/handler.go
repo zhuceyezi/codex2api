@@ -3476,6 +3476,7 @@ func (h *Handler) authMiddlewareWithQuotaRead(allowQuotaRead bool) gin.HandlerFu
 		}
 		if !hasKeys {
 			if allowAnonymous {
+				defer h.beginPendingHTTPUsage(c)()
 				// 显式允许匿名访问（旧行为，仅在 CODEX_ALLOW_ANONYMOUS=true 时启用）
 				c.Next()
 				return
@@ -3556,6 +3557,7 @@ func (h *Handler) authMiddlewareWithQuotaRead(allowQuotaRead bool) gin.HandlerFu
 			c.Abort()
 			return
 		}
+		defer h.beginPendingHTTPUsage(c)()
 		c.Next()
 	}
 }

@@ -1,6 +1,6 @@
 import { api, getAdminKey } from '../api'
 
-export type LiveDataTopic = 'usage' | 'accounts' | 'keys' | 'proxies' | 'settings' | 'runtime'
+export type LiveDataTopic = 'usage' | 'accounts' | 'keys' | 'proxies' | 'settings' | 'runtime' | 'requests'
 type EventListener = (topics: LiveDataTopic[]) => void
 type StatusListener = (connected: boolean) => void
 interface Listener { event: EventListener; status: StatusListener }

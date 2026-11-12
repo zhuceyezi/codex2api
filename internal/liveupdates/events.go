@@ -24,7 +24,8 @@ const (
 	Proxies
 	Settings
 	Runtime
-	All = Usage | Accounts | Keys | Proxies | Settings | Runtime
+	Requests
+	All = Usage | Accounts | Keys | Proxies | Settings | Runtime | Requests
 )
 
 func (t Topics) Names() []string {
@@ -33,7 +34,7 @@ func (t Topics) Names() []string {
 		flag Topics
 		name string
 	}{
-		{Usage, "usage"}, {Accounts, "accounts"}, {Keys, "keys"}, {Proxies, "proxies"}, {Settings, "settings"}, {Runtime, "runtime"},
+		{Usage, "usage"}, {Accounts, "accounts"}, {Keys, "keys"}, {Proxies, "proxies"}, {Settings, "settings"}, {Runtime, "runtime"}, {Requests, "requests"},
 	} {
 		if t&item.flag != 0 {
 			names = append(names, item.name)

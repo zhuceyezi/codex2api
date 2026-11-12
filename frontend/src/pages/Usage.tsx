@@ -1,3 +1,4 @@
+import { mergePendingUsage, usageRowKeys } from '../lib/pendingUsage'
 import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { ConversationDetails, ConversationRetentionSettings } from '../components/ConversationDetails'
 import { ImageBillingCost } from '../components/image-studio/ImageBillingCost'
@@ -404,6 +405,7 @@ function formatServiceTierLabel(t: ReturnType<typeof useTranslation>['t'], tier?
 
 function UsageCostCell({ log }: { log: UsageLog }) {
   const { t } = useTranslation()
+  if (log.request_state === 'running') return <span className="text-muted-foreground" title={t('usage.pendingMetrics')}>—</span>
   const mediaUnit = mediaBillingUnit(log.effective_model || log.model)
   const mode = log.user_billing_mode || ''
   if (mode === 'per_image' || mode === 'per_video' || mode === 'per_second') return <ImageBillingCost mode={mode} media={mediaUnit !== ''} count={log.billed_image_count} unitPrice={log.image_unit_price} userBilled={log.user_billed} accountBilled={log.account_billed} />
@@ -917,6 +919,12 @@ function ImageUsageBadge({ log }: { log: UsageLog }) {
 
 function StatusCodeBadge({ log }: { log: UsageLog }) {
   const { t } = useTranslation()
+  if (log.request_state === 'running') {
+    return <Badge variant="outline" className={cn(usageTableBadgeClass, 'gap-1.5 border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300')}>
+      <span className="size-1.5 rounded-full bg-current motion-safe:animate-pulse" aria-hidden="true" />
+      {t('usage.running')}
+    </Badge>
+  }
   const dotColor = log.status_code === 200
     ? 'bg-emerald-500'
     : log.status_code === 429
@@ -1428,6 +1436,10 @@ export default function Usage() {
   const [showCustomPopover, setShowCustomPopover] = useState(false)
   const customChipRef = useRef<HTMLButtonElement>(null)
   const [logs, setLogs] = useState<UsageLog[]>([])
+  const [insertedLogKeys, setInsertedLogKeys] = useState<Set<string>>(new Set())
+  const previousLogViewRef = useRef<{ load: unknown; keys: Set<string> } | null>(null)
+  const logRowKeys = useMemo(() => usageRowKeys(logs), [logs])
+  const runningCount = logs.filter((log) => log.request_state === 'running').length
   const [logsTotal, setLogsTotal] = useState(0)
   const [logsLoading, setLogsLoading] = useState(false)
   const [errorSummary, setErrorSummary] = useState<OpsErrorSummary | null>(null)
@@ -1592,7 +1604,14 @@ export default function Usage() {
       })
       if (request !== logsRequestRef.current || filter !== logFilterRef.current ||
           page !== logPageRef.current.page || pageSize !== logPageRef.current.pageSize) return
-      setLogs(res.logs ?? [])
+      const nextLogs = mergePendingUsage(res.logs ?? [], res.pending_logs ?? [])
+      const nextKeys = new Set(usageRowKeys(nextLogs).values())
+      const previous = previousLogViewRef.current
+      setInsertedLogKeys(previous?.load === loadLogs
+        ? new Set([...nextKeys].filter((key) => !previous.keys.has(key)))
+        : new Set())
+      previousLogViewRef.current = { load: loadLogs, keys: nextKeys }
+      setLogs(nextLogs)
       setLogsTotal(res.total ?? 0)
     } catch {
       // 静默容错
@@ -1660,6 +1679,10 @@ export default function Usage() {
   useAutoRefresh(async () => {
     await Promise.all([reloadSilently(), loadLogs(true), loadErrorSummary()])
   }, 15_000, !loading && !logsLoading, { topics: ['usage', 'settings'] })
+
+  useAutoRefresh(() => loadLogs(true), 60_000, !loading && !logsLoading, {
+    topics: ['requests'], minEventIntervalMs: 500,
+  })
 
   useEffect(() => {
     persistUsageVisibleColumns(visibleColumns)
@@ -2062,6 +2085,7 @@ export default function Usage() {
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <span className="whitespace-nowrap text-xs text-muted-foreground">{logsLoading ? t('common.loading') : t('usage.recordsCount', { count: logsTotal })}</span>
+                {runningCount > 0 && <span role="status" className="text-xs font-medium text-sky-700 dark:text-sky-300">{t('usage.runningCount', { count: runningCount })}</span>}
                 <Button
                   variant="outline"
                   size="sm"
@@ -2403,8 +2427,9 @@ export default function Usage() {
                   const hasMetrics = visibleColumns.token || visibleColumns.cached || visibleColumns.timing || visibleColumns.tokensPerSec || visibleColumns.cost
                   return (
                     <div
-                      key={log.id}
-                      className="min-w-0 rounded-xl border border-border bg-background/70 p-3.5 shadow-sm"
+                      key={logRowKeys.get(log.id)}
+                      className={cn("min-w-0 rounded-xl border border-border bg-background/70 p-3.5 shadow-sm", insertedLogKeys.has(logRowKeys.get(log.id)!) && 'usage-log-insert')}
+                      data-request-state={log.request_state || 'completed'}
                     >
                       {/* flex-wrap + nowrap 时间：徽标再多也只会把时间挤到下一行，不会挤出视口（issue #522） */}
                       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -2412,6 +2437,7 @@ export default function Usage() {
                           {visibleColumns.status && (
                             <button
                               type="button"
+                              disabled={log.request_state === 'running'}
                               onClick={() => { setFilterStatus(String(log.status_code) as UsageStatusFilter); setPage(1) }}
                               className="rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               title={t('usage.filterByStatus', { status: log.status_code })}
@@ -2419,7 +2445,7 @@ export default function Usage() {
                               <StatusCodeBadge log={log} />
                             </button>
                           )}
-                          <ConversationDetails logId={log.id} />
+                          {log.id > 0 && <ConversationDetails logId={log.id} />}
                           {log.upstream_error_kind === 'cyber_policy' ? <CyberPolicyDetailButton log={log} /> : null}
                           {visibleColumns.type && log.via_websocket ? (
                             <Badge
@@ -2533,7 +2559,7 @@ export default function Usage() {
                             <div className="rounded-lg border border-border/70 bg-card/60 px-2.5 py-2">
                               <div className="text-[11px] font-semibold text-muted-foreground">{t('usage.tableToken')}</div>
                               <div className="mt-1 font-mono tabular-nums">
-                                {log.status_code < 400 && (log.input_tokens > 0 || log.output_tokens > 0) ? (
+                                {log.request_state !== 'running' && log.status_code < 400 && (log.input_tokens > 0 || log.output_tokens > 0) ? (
                                   <>
                                     <UsageInputTokenCount log={log} />
                                     <span className="mx-0.5 text-border">/</span>
@@ -2641,11 +2667,12 @@ export default function Usage() {
                   <TableBody>
                     {logs.map((log: UsageLog) => {
                       return (
-                      <TableRow key={log.id}>
+                      <TableRow key={logRowKeys.get(log.id)} className={cn(insertedLogKeys.has(logRowKeys.get(log.id)!) && 'usage-log-insert')} data-request-state={log.request_state || 'completed'}>
                         {visibleColumns.status && <TableCell>
                           <div className="flex items-center gap-1.5">
                             <button
                               type="button"
+                              disabled={log.request_state === 'running'}
                               onClick={() => { setFilterStatus(String(log.status_code) as UsageStatusFilter); setPage(1) }}
                               className="rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               title={t('usage.filterByStatus', { status: log.status_code })}
@@ -2762,7 +2789,7 @@ export default function Usage() {
                           </div>
                         </TableCell>}
                         {visibleColumns.token && <TableCell className="text-right">
-                          {log.status_code < 400 && (log.input_tokens > 0 || log.output_tokens > 0) ? (
+                          {log.request_state !== 'running' && log.status_code < 400 && (log.input_tokens > 0 || log.output_tokens > 0) ? (
                             <div className={`${usageTableMonoClass} whitespace-nowrap leading-relaxed`}>
                               <UsageInputTokenCount log={log} />
                               <span className="mx-1 text-border">|</span>
@@ -2810,7 +2837,7 @@ export default function Usage() {
                         {visibleColumns.time && <TableCell className={`${usageTableMonoClass} text-right whitespace-nowrap`}>
                           <UsageTimeCell value={log.created_at} />
                         </TableCell>}
-                      <TableCell><ConversationDetails logId={log.id} /></TableCell>
+                      <TableCell>{log.id > 0 && <ConversationDetails logId={log.id} />}</TableCell>
                       </TableRow>
                       )
                     })}

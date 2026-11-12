@@ -2674,6 +2674,9 @@
     "reason7dUrgency": "7d 快重置"
   },
   "usage": {
+    "running": "执行中",
+    "pendingMetrics": "请求完成后统计",
+    "runningCount": "执行中 {{count}} 条",
     "internalScheduledActivation": "定时激活",
     "internalScheduledActivationTooltip": "服务器按当前账号保存的计划发送的测试连接请求",
     "usageAnalysis": "用量分析",

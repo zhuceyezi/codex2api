@@ -8517,12 +8517,13 @@ func (h *Handler) GetUsageLogs(c *gin.Context) {
 				return
 			}
 
+			pending := h.db.PendingUsageLogs(filter)
 			result, err := h.db.ListUsageLogsByTimeRangePaged(ctx, filter)
 			if err != nil {
 				writeInternalError(c, err)
 				return
 			}
-			c.JSON(http.StatusOK, result)
+			c.JSON(http.StatusOK, gin.H{"logs": result.Logs, "total": result.Total, "pending_logs": pending})
 			return
 		}
 

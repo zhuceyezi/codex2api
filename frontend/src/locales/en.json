@@ -2674,6 +2674,9 @@
     "reason7dUrgency": "7d Reset Soon"
   },
   "usage": {
+    "running": "Running",
+    "pendingMetrics": "Available when the request completes",
+    "runningCount": "{{count}} running",
     "internalScheduledActivation": "Scheduled activation",
     "internalScheduledActivationTooltip": "A connection test sent by the server using this account’s saved schedule",
     "usageAnalysis": "Usage breakdown",

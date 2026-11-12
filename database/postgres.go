@@ -201,6 +201,9 @@ type sqlExecer interface {
 
 // DB PostgreSQL 数据库操作
 type DB struct {
+	pendingUsageMu    sync.Mutex
+	pendingUsage      map[string]*pendingUsage
+	pendingUsageID    atomic.Int64
 	conn              *sql.DB
 	driver            string
 	authCacheScope    string
@@ -306,6 +309,7 @@ func NormalizeUsageLogFlushIntervalSeconds(n int) int {
 
 // usageLogEntry 日志缓冲条目
 type usageLogEntry struct {
+	pendingSequence uint64
 	UserBilling
 	RequestID            string
 	UpstreamRequestID    string
@@ -4315,6 +4319,7 @@ func (db *DB) RebindAccountProxyURLs(ctx context.Context, oldURL, newURL string)
 
 // UsageLog 请求日志行
 type UsageLog struct {
+	RequestState string `json:"request_state,omitempty"`
 	UserBilling
 	RequestID            string `json:"request_id"`
 	UpstreamRequestID    string `json:"upstream_request_id"`
@@ -4501,8 +4506,10 @@ func (db *DB) InsertUsageLog(ctx context.Context, log *UsageLogInput) error {
 		createdAt = time.Now()
 	}
 
+	pendingSequence := db.capturePendingUsage(log)
 	db.logMu.Lock()
 	db.logBuf = append(db.logBuf, usageLogEntry{
+		pendingSequence:          pendingSequence,
 		RequestID:                clampUsageLogText(log.RequestID, usageLogRequestIDMaxLen),
 		UpstreamRequestID:        clampUsageLogText(log.UpstreamRequestID, usageLogRequestIDMaxLen),
 		UpstreamProxyID:          log.UpstreamProxyID,
@@ -4860,6 +4867,7 @@ func (db *DB) insertUsageLogBatch(ctx context.Context, batch []usageLogEntry) er
 		err = db.insertSQLiteUsageLogBatch(ctx, batch)
 	}
 	if err == nil && len(batch) > 0 {
+		db.commitPendingUsage(batch)
 		keys := make(map[int64]struct{})
 		for _, entry := range batch {
 			keys[entry.APIKeyID] = struct{}{}

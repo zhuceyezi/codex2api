@@ -61,6 +61,7 @@ func (s upstreamTraceSnapshot) apply(input *database.UsageLogInput) {
 }
 
 type upstreamTraceAudit struct {
+	pendingDB                *database.DB
 	effectiveReasoningEffort string
 	mu                       sync.Mutex
 	requestID                string
@@ -127,7 +128,20 @@ func beginUpstreamTrace(ctx context.Context, account *auth.Account, proxyURL str
 	attempt := &upstreamTraceAttempt{accountID: account.ID(), proxy: label}
 	a.mu.Lock()
 	a.current = attempt
+	requestID, pendingDB := a.requestID, a.pendingDB
 	a.mu.Unlock()
+	if pendingDB != nil {
+		channel := database.UpstreamChannelCodex
+		switch {
+		case account.IsGrokAPI():
+			channel = database.UpstreamChannelGrok
+		case account.IsAntigravityAPI():
+			channel = database.UpstreamChannelAntigravity
+		case account.IsClaudeOAuth():
+			channel = database.UpstreamChannelClaude
+		}
+		pendingDB.UpdatePendingUsageAccount(requestID, account.ID(), channel)
+	}
 	header := account.GetUpstreamRequestIDHeader()
 	return func(resp *http.Response) {
 		if resp == nil || ws {

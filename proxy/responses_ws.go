@@ -331,6 +331,8 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	resetPromptRequestSecurityFrame(c)
 	resetPromptPolicyRequestCorrelationID(c)
 	resetUpstreamRequestTrace(c)
+	finishPendingUsage := h.beginPendingUsage(c, rawPayload, true)
+	defer finishPendingUsage()
 	finishConversation := h.beginConversation(c, rawPayload, "application/x-ndjson")
 	defer finishConversation()
 	quotaParentRequest := c.Request
