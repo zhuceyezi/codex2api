@@ -64,7 +64,7 @@ export function AutoRefreshButton({
         return;
       }
       // 页面在后台时不刷新，直接开始下一轮倒计时。
-      if (document.hidden) {
+      if (document.hidden || navigator.onLine === false) {
         restart();
         return;
       }
@@ -83,9 +83,21 @@ export function AutoRefreshButton({
     restartCountdownRef.current = () => {
       if (!stopped && !refreshing) restart();
     };
+    const resume = () => {
+      if (document.hidden || navigator.onLine === false || refreshing) return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      deadline = Date.now();
+      void tick();
+    };
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("online", resume);
+    window.addEventListener("focus", resume);
     restart();
     return () => {
       stopped = true;
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("online", resume);
+      window.removeEventListener("focus", resume);
       restartCountdownRef.current = null;
       if (timer !== undefined) window.clearTimeout(timer);
     };

@@ -1,4 +1,5 @@
-import { useCallback, useEffect } from 'react'
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
+import { useCallback } from 'react'
 import type { ReactNode } from 'react'
 import {
   Activity,
@@ -35,13 +36,7 @@ export default function RuntimeStatus() {
     load: loadRuntimeStatus,
   })
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void reloadSilently()
-    }, 15000)
-
-    return () => window.clearInterval(timer)
-  }, [reloadSilently])
+  useAutoRefresh(reloadSilently, 15_000, !loading)
 
   const updatedLabel = status?.updated_at ? formatTimeLabel(status.updated_at) : '--:--:--'
 

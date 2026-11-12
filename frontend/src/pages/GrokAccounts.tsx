@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -734,11 +735,15 @@ function GrokAccounts({
     } catch (err) {
       if (controller.signal.aborted) return;
       const message = getErrorMessage(err);
-      setError(message);
-      showToast(message, "error");
+      if (!options?.silent) {
+        setError(message);
+        showToast(message, "error");
+      }
       setLoading(false);
     }
   }, [authFilter, debouncedSearchQuery, groupFilter.exclude, groupFilter.include, groupFilter.ungrouped, page, pageSize, planFilter, showToast, sortDir, sortKey, statusFilter]);
+
+  useAutoRefresh(() => reload({ silent: true }), 30_000, !loading);
 
   const refreshAccountRow = useCallback(async (id: number) => {
     const account = await api.getAccount(id);

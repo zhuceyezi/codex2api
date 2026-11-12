@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { ConversationDetails, ConversationRetentionSettings } from '../components/ConversationDetails'
 import { ImageBillingCost } from '../components/image-studio/ImageBillingCost'
 import { mediaBillingUnit, type MediaBillingUnit } from '../lib/imageBilling'
@@ -1574,24 +1575,36 @@ export default function Usage() {
   }, [buildDimensionFilterParams, reloadSilently])
 
   // 服务端分页加载日志
-  const loadLogs = useCallback(async () => {
-    setLogsLoading(true)
+  const logsRequestRef = useRef(0)
+  const logFilterRef = useRef(buildLogFilterParams)
+  logFilterRef.current = buildLogFilterParams
+  const logPageRef = useRef({ page, pageSize })
+  logPageRef.current = { page, pageSize }
+  const loadLogs = useCallback(async (silent = false) => {
+    const request = ++logsRequestRef.current
+    const filter = buildLogFilterParams
+    if (!silent) setLogsLoading(true)
     try {
       const res = await api.getUsageLogsPaged({
         ...buildLogFilterParams(),
         page,
         pageSize,
       })
+      if (request !== logsRequestRef.current || filter !== logFilterRef.current ||
+          page !== logPageRef.current.page || pageSize !== logPageRef.current.pageSize) return
       setLogs(res.logs ?? [])
       setLogsTotal(res.total ?? 0)
     } catch {
       // 静默容错
     } finally {
-      setLogsLoading(false)
+      if (request === logsRequestRef.current) setLogsLoading(false)
     }
   }, [buildLogFilterParams, page, pageSize])
 
+  const summaryRequestRef = useRef(0)
   const loadErrorSummary = useCallback(async () => {
+    const request = ++summaryRequestRef.current
+    const filter = buildLogFilterParams
     try {
       const params = buildLogFilterParams()
       const summary = await api.getUsageLogsErrorSummary({
@@ -1599,9 +1612,9 @@ export default function Usage() {
         status: undefined,
         errorOnly: undefined,
       })
-      setErrorSummary(summary)
+      if (request === summaryRequestRef.current && filter === logFilterRef.current) setErrorSummary(summary)
     } catch {
-      setErrorSummary(null)
+      if (request === summaryRequestRef.current && filter === logFilterRef.current) setErrorSummary(null)
     }
   }, [buildLogFilterParams])
 
@@ -1644,12 +1657,9 @@ export default function Usage() {
     }
   }, [])
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void reloadSilently()
-    }, 30000)
-    return () => window.clearInterval(timer)
-  }, [reloadSilently])
+  useAutoRefresh(async () => {
+    await Promise.all([reloadSilently(), loadLogs(true), loadErrorSummary()])
+  }, 15_000, !loading && !logsLoading)
 
   useEffect(() => {
     persistUsageVisibleColumns(visibleColumns)
@@ -1832,7 +1842,7 @@ export default function Usage() {
       variant="page"
       loading={loading}
       error={error}
-      onRetry={() => { void reload(); void loadLogs(); void loadAPIKeys() }}
+      onRetry={() => { void reload(); void loadLogs(); void loadErrorSummary(); void loadAPIKeys() }}
       loadingTitle={t('usage.loadingTitle')}
       loadingDescription={t('usage.loadingDesc')}
       errorTitle={t('usage.errorTitle')}
@@ -1841,7 +1851,7 @@ export default function Usage() {
         <PageHeader
           title={t('usage.title')}
           description={t('usage.description')}
-          onRefresh={() => { void reload(); void loadLogs(); void loadAPIKeys() }}
+          onRefresh={() => { void reload(); void loadLogs(); void loadErrorSummary(); void loadAPIKeys() }}
           titleAdornment={<ChannelFilter value={channel} onChange={setChannel} />}
           actions={
             <>

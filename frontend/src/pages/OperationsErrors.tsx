@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -140,13 +141,7 @@ export default function OperationsErrors() {
     load: loadErrorData,
   })
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void reloadSilently()
-    }, 15000)
-
-    return () => window.clearInterval(timer)
-  }, [reloadSilently])
+  useAutoRefresh(reloadSilently, 15_000, !loading)
 
   const hasActiveFilters = Boolean(statusFilter || errorKindFilter || endpointFilter || apiKeyFilter || streamFilter || searchQuery)
   const totalPages = Math.max(1, Math.ceil(data.total / pageSize))

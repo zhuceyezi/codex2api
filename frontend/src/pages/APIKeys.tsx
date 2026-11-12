@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { ANTIGRAVITY_DEFAULT_MODELS as DEFAULT_ANTIGRAVITY_MODEL_OPTIONS } from "../lib/antigravityModels";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import {
@@ -410,6 +411,15 @@ export default function APIKeys() {
     },
     load: loadKeys,
   });
+  useAutoRefresh(async () => {
+    const [, scopes] = await Promise.all([
+      reloadSilently(),
+      data.keys.some((key) => key.limits?.scope_limits?.length)
+        ? api.getAPIKeysScopeSummary().catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    if (scopes) setScopeSummary(scopes.summary ?? {});
+  }, 15_000, !loading);
   const concurrency = useAPIKeyConcurrency();
   const keys = data.keys;
   const groups = data.groups;

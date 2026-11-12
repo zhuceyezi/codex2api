@@ -2,7 +2,7 @@
 //
 // 排序存 sessionStorage：同一标签页内切换菜单、F5 刷新都会保留，关闭标签页或
 // 新开标签页回到默认排序，避免“记住了但自己不知道”的长期意外。
-// 自动刷新间隔是用户显式开启的选项且按钮上始终可见，存 localStorage。
+// 自动刷新默认 10 秒，用户选择的间隔（含关闭）存 localStorage。
 
 export const ACCOUNT_LIST_SORT_STORAGE_KEY = "codex2api:accounts:sort";
 export const ACCOUNT_AUTO_REFRESH_STORAGE_KEY =
@@ -109,9 +109,9 @@ export function readAccountAutoRefreshSeconds(
     const raw = resolveStorage("local", storage)?.getItem(
       ACCOUNT_AUTO_REFRESH_STORAGE_KEY,
     );
-    return raw ? normalizeAccountAutoRefreshSeconds(raw) : 0;
+    return raw !== null && raw !== undefined ? normalizeAccountAutoRefreshSeconds(raw) : 10;
   } catch {
-    return 0;
+    return 10;
   }
 }
 
@@ -122,10 +122,6 @@ export function writeAccountAutoRefreshSeconds(
   try {
     const target = resolveStorage("local", storage);
     if (!target) return;
-    if (seconds === 0) {
-      target.removeItem(ACCOUNT_AUTO_REFRESH_STORAGE_KEY);
-      return;
-    }
     target.setItem(ACCOUNT_AUTO_REFRESH_STORAGE_KEY, String(seconds));
   } catch {
     // Keep the in-memory interval working when storage is unavailable.

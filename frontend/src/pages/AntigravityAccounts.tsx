@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -422,8 +423,10 @@ function AntigravityAccounts({
       } catch (loadError) {
         if (controller.signal.aborted) return;
         const message = getErrorMessage(loadError);
-        setError(message);
-        showToast(message, "error");
+        if (!options?.silent) {
+          setError(message);
+          showToast(message, "error");
+        }
       } finally {
         if (requestAbortRef.current === controller) setLoading(false);
       }
@@ -442,6 +445,8 @@ function AntigravityAccounts({
       statusFilter,
     ],
   );
+
+  useAutoRefresh(() => reload({ silent: true }), 30_000, !loading);
 
   useEffect(() => {
     void reload();

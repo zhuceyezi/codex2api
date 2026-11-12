@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -580,6 +581,11 @@ export default function Proxies() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  useAutoRefresh(async () => {
+    const response = await api.listProxies();
+    setProxies(response.proxies);
+  }, 30_000, !loading);
 
   const counts = useMemo(() => {
     let enabled = 0;

@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { getTimezone } from '../utils/time'
 import { useNavigate } from 'react-router-dom'
@@ -49,13 +50,12 @@ export default function ChannelMonitor() {
   })
 
   useEffect(() => {
-    const poll = window.setInterval(() => { void reloadSilently() }, 30_000)
     const tick = window.setInterval(() => setClock(Date.now()), 60_000)
     return () => {
-      window.clearInterval(poll)
       window.clearInterval(tick)
     }
-  }, [reloadSilently])
+  }, [])
+  useAutoRefresh(reloadSilently, 30_000, !loading)
 
   const items = useMemo(
     () => [...data.items].sort((left, right) => {

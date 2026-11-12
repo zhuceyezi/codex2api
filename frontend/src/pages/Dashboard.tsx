@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import type { ReactNode } from 'react'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -174,13 +175,7 @@ export default function Dashboard() {
     void loadPoolRunwayData()
   }, [channel, showPoolRunway, loadPoolRunwayData, setData])
 
-  useEffect(() => {
-    if (!showPoolRunway || !channel) return
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void loadPoolRunwayData()
-    }, DASHBOARD_POOL_REFRESH_INTERVAL_MS)
-    return () => window.clearInterval(timer)
-  }, [channel, loadPoolRunwayData, showPoolRunway])
+  useAutoRefresh(loadPoolRunwayData, DASHBOARD_POOL_REFRESH_INTERVAL_MS, showPoolRunway && Boolean(channel) && !loading)
 
   useEffect(() => {
     timeRangeRef.current = timeRange
@@ -193,12 +188,14 @@ export default function Dashboard() {
   }, [timeRange, channel, reloadSilently])
 
   // 加载服务端聚合的图表数据（12~48 个聚合点，非原始行）
-  const loadChartData = useCallback(async () => {
+  const loadChartData = useCallback(async (silent = false) => {
     chartAbort.current?.abort()
     const controller = new AbortController()
     chartAbort.current = controller
-    setChartLoading(true)
-    setChartError(null)
+    if (!silent) {
+      setChartLoading(true)
+      setChartError(null)
+    }
     try {
       const { start, end } = getTimeRangeISO(timeRange)
       const { bucketMinutes } = getBucketConfig(timeRange)
@@ -211,10 +208,11 @@ export default function Dashboard() {
       })
       if (!controller.signal.aborted) {
         setChartData(res)
+        setChartError(null)
         setChartRefreshedAt(Date.now())
       }
     } catch (err) {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && !silent) {
         setChartError(err instanceof Error ? err.message : t('common.loadFailed'))
       }
     } finally {
@@ -246,18 +244,9 @@ export default function Dashboard() {
     void loadChartData()
   }, [loadChartData])
 
-  // 仅在 1h（实时）模式下启用自动刷新
-  useEffect(() => {
-    if (timeRange !== '1h') return
-
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== 'visible') return
-      void reloadSilently()
-      void loadChartData()
-    }, DASHBOARD_REFRESH_INTERVAL_MS)
-
-    return () => window.clearInterval(timer)
-  }, [reloadSilently, timeRange, loadChartData])
+  useAutoRefresh(async () => {
+    await Promise.all([reloadSilently(), loadChartData(true)])
+  }, DASHBOARD_REFRESH_INTERVAL_MS, !loading)
 
   const { stats, usageStats, settings, accountAnalysis } = data
   const showFullUsageNumbers = settings?.show_full_usage_numbers ?? false
@@ -295,7 +284,7 @@ export default function Dashboard() {
       variant="page"
       loading={loading}
       error={error}
-      onRetry={() => { void reload(); void loadChartData() }}
+      onRetry={() => { void reload(); void loadChartData(); void loadPoolRunwayData() }}
       loadingTitle={t('dashboard.loadingTitle')}
       loadingDescription={t('dashboard.loadingDesc')}
       errorTitle={t('dashboard.errorTitle')}
@@ -304,7 +293,7 @@ export default function Dashboard() {
         <PageHeader
           title={t('dashboard.title')}
           description={t('dashboard.description')}
-          onRefresh={() => { void reload(); void loadChartData() }}
+          onRefresh={() => { void reload(); void loadChartData(); void loadPoolRunwayData() }}
           titleAdornment={<ChannelFilter value={channel} onChange={handleChannelChange} />}
           actions={
             <div className="flex flex-wrap items-center gap-2">

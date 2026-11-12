@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { useIntelligenceBars } from "../hooks/useIntelligenceBars";
 import AccountIntelligenceBar, { AccountIntelligenceActions } from "../components/AccountIntelligenceBar";
 import type { IntelligenceBar } from "../lib/intelligenceCheck";
@@ -642,18 +643,23 @@ export default function ClaudeAccounts({ headerSlot }: { headerSlot?: ReactNode 
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
 
-  const loadAnalysis = useCallback(async () => {
+  const loadAnalysis = useCallback(async (silent = false) => {
     if (!showAnalysis) return;
     analysisAbortRef.current?.abort();
     const controller = new AbortController();
     analysisAbortRef.current = controller;
-    setAnalysisLoading(true);
-    setAnalysisError(null);
+    if (!silent) {
+      setAnalysisLoading(true);
+      setAnalysisError(null);
+    }
     try {
       const res = await api.getAccountAnalysis("claude", controller.signal);
-      if (!controller.signal.aborted) setAnalysis(res);
+      if (!controller.signal.aborted) {
+        setAnalysis(res);
+        setAnalysisError(null);
+      }
     } catch (error) {
-      if (!controller.signal.aborted) setAnalysisError(getErrorMessage(error));
+      if (!controller.signal.aborted && !silent) setAnalysisError(getErrorMessage(error));
     } finally {
       if (analysisAbortRef.current === controller) {
         analysisAbortRef.current = null;
@@ -794,6 +800,12 @@ export default function ClaudeAccounts({ headerSlot }: { headerSlot?: ReactNode 
     sortDir,
     showToast,
   ]);
+
+  useAutoRefresh(async () => {
+    await reload({ silent: true });
+    setPageStatsToken((token) => token + 1);
+    await loadAnalysis(true);
+  }, 30_000, !loading);
 
   useEffect(() => {
     void reload();

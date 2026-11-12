@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { ImageBillingCost } from '../components/image-studio/ImageBillingCost'
 import { mediaBillingUnit } from '../lib/imageBilling'
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
@@ -111,29 +112,37 @@ export default function APIKeyUsagePortal() {
   const [logFilter, setLogFilter] = useState<PublicAPIKeyUsageLogFilter>({})
   const logoSrc = siteLogo || DEFAULT_SITE_LOGO
 
+  const reloadSequenceRef = useRef(0)
+
   // 已登录后的刷新/切换时间范围（沿用当前会话的 key）
-  const reload = async (nextRange = range, nextLogPage = logPage, nextLogPageSize = logPageSize, nextFilter = logFilter) => {
+  const reload = async (nextRange = range, nextLogPage = logPage, nextLogPageSize = logPageSize, nextFilter = logFilter, silent = false) => {
     const requestAPIKey = activeAPIKey
     if (!requestAPIKey) return
-    setLoading(true)
-    setError('')
+    const sequence = ++reloadSequenceRef.current
+    if (!silent) {
+      setLoading(true)
+      setError('')
+    }
     try {
       const result = await api.getPublicAPIKeyUsage(requestAPIKey, nextRange, {
         page: nextLogPage,
         pageSize: nextLogPageSize,
         ...nextFilter,
       })
-      if (activeAPIKeyRef.current !== requestAPIKey) return
+      if (activeAPIKeyRef.current !== requestAPIKey || sequence !== reloadSequenceRef.current) return
       setData(result)
       const responsePage = result.usage.recent_logs_page || nextLogPage
       if (responsePage !== nextLogPage) setLogPage(responsePage)
     } catch (err) {
-      if (activeAPIKeyRef.current !== requestAPIKey) return
-      setError(getErrorMessage(err))
+      if (activeAPIKeyRef.current !== requestAPIKey || sequence !== reloadSequenceRef.current) return
+      if (!silent) setError(getErrorMessage(err))
     } finally {
-      if (activeAPIKeyRef.current === requestAPIKey) setLoading(false)
+      if (activeAPIKeyRef.current === requestAPIKey && sequence === reloadSequenceRef.current) setLoading(false)
     }
   }
+
+  useAutoRefresh(() => reload(range, logPage, logPageSize, logFilter, true), 15_000,
+    Boolean(activeAPIKey && data) && !loading && !bootstrapping)
 
   // 挂载时若浏览器记住了 key，则自动登录；失败则回到登录窗口
   useEffect(() => {

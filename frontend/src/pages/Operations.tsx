@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { useCallback, useEffect, useState } from 'react'
 import {
   Activity,
@@ -49,16 +50,17 @@ export default function Operations() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       setCountdown((prev) => {
-        if (prev <= 1) {
-          void reloadSilently()
-          return 15
-        }
-        return prev - 1
+        return Math.max(0, prev - 1)
       })
     }, 1000)
 
     return () => window.clearInterval(timer)
-  }, [reloadSilently])
+  }, [])
+
+  useAutoRefresh(async () => {
+    await reloadSilently()
+    setCountdown(15)
+  }, 15_000, !loading)
 
   const updatedLabel = overview?.updated_at ? formatTimeLabel(overview.updated_at) : '--:--:--'
 

@@ -1,3 +1,4 @@
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, RefreshCw } from 'lucide-react'
@@ -77,13 +78,7 @@ export default function SchedulerBoard() {
     load: loadSchedulerData,
   })
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void reloadSilently()
-    }, 15000)
-
-    return () => window.clearInterval(timer)
-  }, [reloadSilently])
+  useAutoRefresh(reloadSilently, 15_000, !loading)
 
   useEffect(() => () => requestAbortRef.current?.abort(), [])
 
