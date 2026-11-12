@@ -36,7 +36,7 @@ export default function RuntimeStatus() {
     load: loadRuntimeStatus,
   })
 
-  useAutoRefresh(reloadSilently, 15_000, !loading)
+  useAutoRefresh(reloadSilently, 15_000, !loading, { topics: ['runtime', 'usage', 'accounts', 'settings'] })
 
   const updatedLabel = status?.updated_at ? formatTimeLabel(status.updated_at) : '--:--:--'
 

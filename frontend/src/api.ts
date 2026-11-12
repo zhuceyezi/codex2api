@@ -587,6 +587,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  getLiveDataTicket: (signal?: AbortSignal) => request<{ ticket: string }>('/live-ticket', { method: 'POST', signal }),
+  getPublicLiveDataTicket: (apiKey: string, signal?: AbortSignal) =>
+    requestAPIKeyUsage<{ ticket: string }>('/live-ticket', apiKey, { method: 'POST', signal }),
   getPublicAPIKeyConcurrency: (apiKey: string, options: RequestInit = {}) =>
     requestAPIKeyUsage<{ current: number }>('/concurrency', apiKey, options),
   getPublicAPIKeyUsage: (apiKey: string, range = '30d', params: { page?: number; pageSize?: number } & PublicAPIKeyUsageLogFilter = {}) => {

@@ -24,6 +24,7 @@ import (
 
 	"github.com/codex2api/cache"
 	"github.com/codex2api/database"
+	"github.com/codex2api/internal/liveupdates"
 	"github.com/codex2api/internal/openaiidentity"
 	"github.com/codex2api/security/promptfilter"
 )
@@ -7139,6 +7140,7 @@ func (s *Store) tryAcquireAccountWithFailure(acc *Account, limit int64, updateSc
 	}
 	acc.TotalRequests.Add(1)
 	acc.LastUsedAt.Store(now.UnixNano())
+	liveupdates.Publish(liveupdates.Runtime, 0)
 	if reservation.HitLimit {
 		s.markDispatchCountLimitCooldown(acc, reservation.ResetAt, updateSchedulerOnLimit)
 	}
@@ -8907,6 +8909,7 @@ func (s *Store) Release(acc *Account) {
 		return
 	}
 	if releaseOccupiedAccountSlot(acc) {
+		liveupdates.Publish(liveupdates.Runtime, 0)
 		s.notifySchedulerAccountAvailability(acc, false)
 	}
 }

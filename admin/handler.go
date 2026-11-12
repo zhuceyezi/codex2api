@@ -35,6 +35,7 @@ import (
 	"github.com/codex2api/cache"
 	"github.com/codex2api/database"
 	"github.com/codex2api/internal/imagestore"
+	"github.com/codex2api/internal/liveupdates"
 	"github.com/codex2api/internal/openaiidentity"
 	"github.com/codex2api/internal/version"
 	"github.com/codex2api/proxy"
@@ -46,6 +47,7 @@ import (
 
 // Handler 管理后台 API 处理器
 type Handler struct {
+	liveData                 liveDataState
 	intelligenceDeviceConfig *proxy.DeviceProfileConfig
 	intelligenceOnce         sync.Once
 	intelligenceWG           sync.WaitGroup
@@ -961,6 +963,9 @@ func (h *Handler) getUsageStatsFilteredCached(ctx context.Context, rangeStart, r
 		cacheTTL = adminUsageRangeCacheTTL
 	}
 	if cacheKey != "" {
+		cacheKey += fmt.Sprintf(":revision:%d", liveupdates.UsageRevision())
+	}
+	if cacheKey != "" {
 		var cached database.UsageStats
 		if h.getRuntimeJSON(ctx, adminUsageStatsCacheNamespace, cacheKey, &cached) {
 			return &cached, nil
@@ -1004,6 +1009,7 @@ func (h *Handler) getUsageStatsSummaryFilteredCached(ctx context.Context, rangeS
 		}
 		cacheKey += dimKey
 	}
+	cacheKey += fmt.Sprintf(":revision:%d", liveupdates.UsageRevision())
 	var cached database.UsageStats
 	if h.getRuntimeJSON(ctx, adminUsageStatsCacheNamespace, cacheKey, &cached) {
 		return &cached, nil
@@ -1104,6 +1110,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	keyUsage.GET("/summary", h.GetPublicAPIKeyUsageSummary)
 	keyUsage.GET("/me", h.GetPublicAPIKeyUsageSummary)
 	keyUsage.GET("/concurrency", h.GetPublicAPIKeyConcurrency)
+	keyUsage.POST("/live-ticket", h.GetPublicLiveDataTicket)
+	r.GET("/api/live-data", h.LiveDataSocket)
 
 	// 账号自助添加公开门户（无 admin 鉴权；开关门控 + IP 限流；见 self_service.go）
 	accountPortal := r.Group("/api/account-portal")
@@ -1138,7 +1146,9 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		if shouldInvalidateAccountSnapshotCaches(c.Request.Method, c.Request.URL.Path, c.Writer.Status()) {
 			h.invalidateAccountSnapshotCaches()
 		}
+		publishAdminLiveDataChange(c)
 	})
+	api.POST("/live-ticket", h.GetAdminLiveDataTicket)
 	api.GET("/stats", h.GetStats)
 	api.GET("/accounts", h.ListAccounts)
 	api.GET("/accounts/analysis", h.GetAccountAnalysis)
@@ -7847,7 +7857,7 @@ func (h *Handler) GetChartData(c *gin.Context) {
 	// Canonicalize moving ranges so periodic refreshes reuse the same result.
 	// The bucket width itself is the natural cache window for chart data.
 	cacheWindow := int64(bucketMinutes * 60)
-	cacheKey := fmt.Sprintf("%d|%d|%d|%s", startTime.Unix()/cacheWindow, endTime.Unix()/cacheWindow, bucketMinutes, channel)
+	cacheKey := fmt.Sprintf("%d|%d|%d|%s|%d", startTime.Unix()/cacheWindow, endTime.Unix()/cacheWindow, bucketMinutes, channel, liveupdates.UsageRevision())
 	h.chartCacheMu.RLock()
 	if entry, ok := h.chartCacheData[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
 		h.chartCacheMu.RUnlock()

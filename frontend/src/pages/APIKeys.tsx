@@ -419,7 +419,7 @@ export default function APIKeys() {
         : Promise.resolve(null),
     ]);
     if (scopes) setScopeSummary(scopes.summary ?? {});
-  }, 15_000, !loading);
+  }, 15_000, !loading, { topics: ['keys', 'usage', 'settings'] });
   const concurrency = useAPIKeyConcurrency();
   const keys = data.keys;
   const groups = data.groups;

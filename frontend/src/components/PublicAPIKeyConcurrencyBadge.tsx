@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import { AdminAPIError, api } from '../api'
 import APIKeyConcurrencyBadge from './APIKeyConcurrencyBadge'
 
-const REFRESH_INTERVAL_MS = 5_000
 const REFRESH_TIMEOUT_MS = 4_000
 const MAX_CONSECUTIVE_FAILURES = 3
 
 export default function PublicAPIKeyConcurrencyBadge({ apiKey, limit }: { apiKey: string; limit?: number }) {
   const [current, setCurrent] = useState<number>()
+  const refreshRef = useRef<() => Promise<void>>(async () => {})
   useEffect(() => {
     let cancelled = false
     let pending = false
@@ -34,14 +35,14 @@ export default function PublicAPIKeyConcurrencyBadge({ apiKey, limit }: { apiKey
         pending = false
       }
     }
+    refreshRef.current = refresh
     void refresh()
-    const timer = window.setInterval(() => void refresh(), REFRESH_INTERVAL_MS)
     document.addEventListener('visibilitychange', refresh)
     return () => {
       cancelled = true
-      window.clearInterval(timer)
       document.removeEventListener('visibilitychange', refresh)
     }
   }, [apiKey])
+  useAutoRefresh(() => refreshRef.current(), 60_000, Boolean(apiKey), { apiKey, topics: ['runtime', 'keys'], minEventIntervalMs: 1000 })
   return <APIKeyConcurrencyBadge current={current} limit={limit} />
 }

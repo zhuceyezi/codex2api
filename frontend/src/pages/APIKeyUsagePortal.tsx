@@ -142,7 +142,7 @@ export default function APIKeyUsagePortal() {
   }
 
   useAutoRefresh(() => reload(range, logPage, logPageSize, logFilter, true), 15_000,
-    Boolean(activeAPIKey && data) && !loading && !bootstrapping)
+    Boolean(activeAPIKey && data) && !loading && !bootstrapping, { apiKey: activeAPIKey, topics: ['usage', 'keys'] })
 
   // 挂载时若浏览器记住了 key，则自动登录；失败则回到登录窗口
   useEffect(() => {

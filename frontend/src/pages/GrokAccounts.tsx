@@ -743,7 +743,7 @@ function GrokAccounts({
     }
   }, [authFilter, debouncedSearchQuery, groupFilter.exclude, groupFilter.include, groupFilter.ungrouped, page, pageSize, planFilter, showToast, sortDir, sortKey, statusFilter]);
 
-  useAutoRefresh(() => reload({ silent: true }), 30_000, !loading);
+  useAutoRefresh(() => reload({ silent: true }), 30_000, !loading, { topics: ['accounts', 'usage'], minEventIntervalMs: 5000 });
 
   const refreshAccountRow = useCallback(async (id: number) => {
     const account = await api.getAccount(id);

@@ -1,7 +1,8 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { api } from '../api'
 import type { AccountLiveStateResponse } from '../types'
 import { mergeAccountLiveState } from '../lib/accountLiveState'
+import { useAutoRefresh } from './useAutoRefresh'
 
 export { mergeAccountLiveState }
 
@@ -11,44 +12,22 @@ export function useAccountLiveState(
   enabled = true,
 ) {
   const idsKey = useMemo(() => ids.join(','), [ids])
-
+  const controllerRef = useRef<AbortController | null>(null)
+  const refresh = async () => {
+    if (!enabled || !idsKey || document.hidden) return
+    controllerRef.current?.abort()
+    const controller = new AbortController()
+    controllerRef.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 5000)
+    try {
+      const response = await api.getAccountLiveState(idsKey.split(',').map(Number), controller.signal)
+      if (!controller.signal.aborted) apply(response)
+    } catch { /* Keep the last known counters until the next update. */ }
+    finally { window.clearTimeout(timeout) }
+  }
   useEffect(() => {
-    if (!enabled || !idsKey) return undefined
-    let stopped = false
-    let timer: number | undefined
-    let controller: AbortController | undefined
-
-    const poll = async () => {
-      if (stopped) return
-      if (document.hidden) {
-        timer = window.setTimeout(poll, 1000)
-        return
-      }
-      controller?.abort()
-      const current = new AbortController()
-      controller = current
-      // A hung fetch must not stop the poll forever; abort it and let the next
-      // tick retry. The list reload remains the fallback for stale data.
-      const timeout = window.setTimeout(() => current.abort(), 5000)
-      try {
-        const response = await api.getAccountLiveState(
-          idsKey.split(',').map(Number),
-          current.signal,
-        )
-        if (!stopped && !current.signal.aborted) apply(response)
-      } catch {
-        // The next tick retries; live counters must never disrupt the page.
-      } finally {
-        window.clearTimeout(timeout)
-      }
-      if (!stopped) timer = window.setTimeout(poll, 1000)
-    }
-
-    void poll()
-    return () => {
-      stopped = true
-      controller?.abort()
-      if (timer !== undefined) window.clearTimeout(timer)
-    }
-  }, [apply, enabled, idsKey])
+    void refresh()
+    return () => controllerRef.current?.abort()
+  }, [enabled, idsKey, apply])
+  useAutoRefresh(refresh, 60_000, enabled && Boolean(idsKey), { topics: ['runtime', 'accounts'], minEventIntervalMs: 1000 })
 }

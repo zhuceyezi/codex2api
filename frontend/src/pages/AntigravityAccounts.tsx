@@ -446,7 +446,7 @@ function AntigravityAccounts({
     ],
   );
 
-  useAutoRefresh(() => reload({ silent: true }), 30_000, !loading);
+  useAutoRefresh(() => reload({ silent: true }), 30_000, !loading, { topics: ['accounts', 'usage'], minEventIntervalMs: 5000 });
 
   useEffect(() => {
     void reload();

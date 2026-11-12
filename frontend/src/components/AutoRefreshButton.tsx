@@ -1,14 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { Check, ChevronDown, RefreshCw } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { autoRefreshCountdownStep } from "@/lib/autoRefreshCountdown";
 import { cn } from "@/lib/utils";
 
 // 刷新分裂按钮：左侧手动刷新，右侧下拉选择自动刷新间隔（0 = 关闭）。
-// 定时器与“刷新中”状态都留在组件内部，避免宿主大页面每轮额外重渲染。
-// 自动刷新只在上一轮完成后再排下一轮，页面处于后台时跳过。
+// WS 变更通知驱动自动刷新；所选间隔控制最多刷新频率，0 表示暂停。
 export function AutoRefreshButton({
   onRefresh,
   onAutoRefresh,
@@ -32,83 +31,21 @@ export function AutoRefreshButton({
     return intervals.includes(initial) ? initial : 0;
   });
   const [running, setRunning] = useState(false);
-  // 距下一轮自动刷新的剩余秒数，每秒递减；只重渲染本按钮。
-  const [remaining, setRemaining] = useState(seconds);
-  const onAutoRefreshRef = useRef(onAutoRefresh);
-  useEffect(() => {
-    onAutoRefreshRef.current = onAutoRefresh;
-  }, [onAutoRefresh]);
-  // 手动刷新后从完整间隔重新倒计时；自动刷新进行中时由它结束后重排。
-  const restartCountdownRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
-    if (seconds <= 0) return undefined;
-    let stopped = false;
-    let refreshing = false;
-    let timer: number | undefined;
-    let deadline = 0;
-    const wait = () => {
-      const step = autoRefreshCountdownStep(deadline, Date.now());
-      setRemaining(step.remaining);
-      timer = window.setTimeout(tick, step.delay);
-    };
-    const restart = () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      deadline = Date.now() + seconds * 1000;
-      wait();
-    };
-    const tick = async () => {
-      if (stopped) return;
-      if (Date.now() < deadline) {
-        wait();
-        return;
-      }
-      // 页面在后台时不刷新，直接开始下一轮倒计时。
-      if (document.hidden || navigator.onLine === false) {
-        restart();
-        return;
-      }
-      refreshing = true;
-      setRunning(true);
-      try {
-        await onAutoRefreshRef.current();
-      } catch {
-        // 自动刷新失败不打扰用户，下一轮继续。
-      } finally {
-        refreshing = false;
-        if (!stopped) setRunning(false);
-      }
-      if (!stopped) restart();
-    };
-    restartCountdownRef.current = () => {
-      if (!stopped && !refreshing) restart();
-    };
-    const resume = () => {
-      if (document.hidden || navigator.onLine === false || refreshing) return;
-      if (timer !== undefined) window.clearTimeout(timer);
-      deadline = Date.now();
-      void tick();
-    };
-    document.addEventListener("visibilitychange", resume);
-    window.addEventListener("online", resume);
-    window.addEventListener("focus", resume);
-    restart();
-    return () => {
-      stopped = true;
-      document.removeEventListener("visibilitychange", resume);
-      window.removeEventListener("online", resume);
-      window.removeEventListener("focus", resume);
-      restartCountdownRef.current = null;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [seconds]);
+  useAutoRefresh(async () => {
+    setRunning(true);
+    try { await onAutoRefresh(); }
+    finally { setRunning(false); }
+  }, Math.max(seconds, 60) * 1000, seconds > 0, {
+    topics: ["accounts", "usage"],
+    minEventIntervalMs: seconds * 1000,
+  });
 
   const resolvedLabel = label ?? t("common.refresh");
   const autoLabel =
     seconds > 0
       ? running
         ? t("common.autoRefreshRunning")
-        : t("common.autoRefreshCountdown", { seconds: remaining })
+        : t("common.liveUpdates")
       : t("common.autoRefreshOff");
 
   return (
@@ -119,7 +56,6 @@ export function AutoRefreshButton({
         size="sm"
         onClick={() => {
           onRefresh();
-          restartCountdownRef.current?.();
         }}
         className="rounded-r-none"
         title={seconds > 0 ? `${resolvedLabel} · ${autoLabel}` : resolvedLabel}
@@ -127,12 +63,12 @@ export function AutoRefreshButton({
         <RefreshCw className={cn("size-3.5", running && "animate-spin")} />
         <span className="max-[380px]:hidden">{resolvedLabel}</span>
         {seconds > 0 ? (
-          // 固定最小宽度，秒数从两位变一位时按钮不跳动。
+          // 固定标记宽度，更新时按钮不跳动。
           <span
             aria-hidden="true"
             className="min-w-[2.25rem] rounded bg-primary/10 px-1 text-center text-[11px] font-semibold tabular-nums text-primary"
           >
-            {running ? "···" : `${remaining}s`}
+            {running ? "···" : "WS"}
           </span>
         ) : null}
       </Button>
@@ -190,7 +126,7 @@ export function AutoRefreshButton({
                   </span>
                   <span className="min-w-0 flex-1">
                     {value > 0
-                      ? t("common.autoRefreshEvery", { seconds: value })
+                      ? t("common.liveUpdateInterval", { seconds: value })
                       : t("common.autoRefreshOff")}
                   </span>
                 </DropdownMenu.RadioItem>

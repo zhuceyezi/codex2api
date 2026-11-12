@@ -141,7 +141,7 @@ export default function OperationsErrors() {
     load: loadErrorData,
   })
 
-  useAutoRefresh(reloadSilently, 15_000, !loading)
+  useAutoRefresh(reloadSilently, 15_000, !loading, { topics: ['runtime', 'usage', 'accounts', 'settings'] })
 
   const hasActiveFilters = Boolean(statusFilter || errorKindFilter || endpointFilter || apiKeyFilter || streamFilter || searchQuery)
   const totalPages = Math.max(1, Math.ceil(data.total / pageSize))

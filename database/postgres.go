@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/codex2api/internal/liveupdates"
 	"github.com/codex2api/internal/openaiidentity"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -4852,10 +4853,22 @@ func (db *DB) flushLogBatch(drain bool) bool {
 // insertUsageLogBatch 按驱动把一批日志写进去。整批是一个事务：日志行、API Key 累计额度
 // 计数器、api_keys.quota_used 要么一起成功，要么一起回滚。
 func (db *DB) insertUsageLogBatch(ctx context.Context, batch []usageLogEntry) error {
+	var err error
 	if db.driver == "postgres" {
-		return db.batchInsertLogs(ctx, batch)
+		err = db.batchInsertLogs(ctx, batch)
+	} else {
+		err = db.insertSQLiteUsageLogBatch(ctx, batch)
 	}
-	return db.insertSQLiteUsageLogBatch(ctx, batch)
+	if err == nil && len(batch) > 0 {
+		keys := make(map[int64]struct{})
+		for _, entry := range batch {
+			keys[entry.APIKeyID] = struct{}{}
+		}
+		for key := range keys {
+			liveupdates.Publish(liveupdates.Usage|liveupdates.Keys, key)
+		}
+	}
+	return err
 }
 
 // isUsageLogDataError 判断失败是不是「这批数据本身写不进去」。PostgreSQL 的 SQLSTATE
@@ -8031,7 +8044,13 @@ func (db *DB) UpdateAccountCredit(ctx context.Context, id int64, creditEnabled, 
 
 // UpdateCredentials 原子合并更新账号的 credentials（JSONB || 运算符，不覆盖已有字段）
 // 解决并发刷新时一个进程覆盖另一个进程写入的字段的问题
-func (db *DB) UpdateCredentials(ctx context.Context, id int64, credentials map[string]interface{}) error {
+func (db *DB) UpdateCredentials(ctx context.Context, id int64, credentials map[string]interface{}) (resultErr error) {
+	defer func() {
+		if resultErr == nil {
+			liveupdates.Publish(liveupdates.Accounts, 0)
+		}
+	}()
+
 	if db.isSQLite() {
 		return db.updateCredentialsSQLite(ctx, id, credentials)
 	}

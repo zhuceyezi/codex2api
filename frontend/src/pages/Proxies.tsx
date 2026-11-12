@@ -585,7 +585,7 @@ export default function Proxies() {
   useAutoRefresh(async () => {
     const response = await api.listProxies();
     setProxies(response.proxies);
-  }, 30_000, !loading);
+  }, 30_000, !loading, { topics: ['proxies', 'runtime'], minEventIntervalMs: 30_000 });
 
   const counts = useMemo(() => {
     let enabled = 0;

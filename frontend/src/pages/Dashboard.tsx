@@ -175,7 +175,7 @@ export default function Dashboard() {
     void loadPoolRunwayData()
   }, [channel, showPoolRunway, loadPoolRunwayData, setData])
 
-  useAutoRefresh(loadPoolRunwayData, DASHBOARD_POOL_REFRESH_INTERVAL_MS, showPoolRunway && Boolean(channel) && !loading)
+  useAutoRefresh(loadPoolRunwayData, DASHBOARD_POOL_REFRESH_INTERVAL_MS, showPoolRunway && Boolean(channel) && !loading, { topics: ['accounts', 'usage'], minEventIntervalMs: 30_000 })
 
   useEffect(() => {
     timeRangeRef.current = timeRange
@@ -246,7 +246,7 @@ export default function Dashboard() {
 
   useAutoRefresh(async () => {
     await Promise.all([reloadSilently(), loadChartData(true)])
-  }, DASHBOARD_REFRESH_INTERVAL_MS, !loading)
+  }, DASHBOARD_REFRESH_INTERVAL_MS, !loading, { topics: ['usage', 'accounts', 'settings'] })
 
   const { stats, usageStats, settings, accountAnalysis } = data
   const showFullUsageNumbers = settings?.show_full_usage_numbers ?? false

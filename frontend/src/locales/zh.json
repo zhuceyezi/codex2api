@@ -740,6 +740,8 @@
     "restartTimeout": "服务可能仍在重启，请稍后手动刷新页面查看新版本",
     "logout": "退出登录",
     "refresh": "刷新",
+    "liveUpdates": "实时更新",
+    "liveUpdateInterval": "实时更新，间隔至少 {{seconds}} 秒",
     "autoRefresh": "自动刷新",
     "autoRefreshOff": "关闭自动刷新",
     "autoRefreshEvery": "每 {{seconds}} 秒",

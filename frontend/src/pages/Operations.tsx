@@ -1,5 +1,5 @@
 import { useAutoRefresh } from '../hooks/useAutoRefresh'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
 import {
   Activity,
   AlertTriangle,
@@ -40,27 +40,13 @@ export default function Operations() {
     load: loadOperationsData,
   })
 
-  const [countdown, setCountdown] = useState(15)
-
   const triggerManualReload = useCallback(async () => {
-    setCountdown(15)
     await reload()
   }, [reload])
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setCountdown((prev) => {
-        return Math.max(0, prev - 1)
-      })
-    }, 1000)
-
-    return () => window.clearInterval(timer)
-  }, [])
-
-  useAutoRefresh(async () => {
-    await reloadSilently()
-    setCountdown(15)
-  }, 15_000, !loading)
+  useAutoRefresh(reloadSilently, 15_000, !loading, {
+    topics: ['runtime', 'usage', 'accounts', 'settings'],
+  })
 
   const updatedLabel = overview?.updated_at ? formatTimeLabel(overview.updated_at) : '--:--:--'
 
@@ -85,7 +71,7 @@ export default function Operations() {
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
                 </span>
-                <span>{t('ops.autoRefreshing', { sec: countdown })}</span>
+                <span>{t('common.liveUpdates')}</span>
               </div>
               <span className="text-xs text-muted-foreground max-sm:text-center">
                 {t('ops.lastUpdated', { time: updatedLabel })}

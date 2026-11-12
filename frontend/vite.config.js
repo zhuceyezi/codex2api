@@ -53,7 +53,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:8080',
+      '/api': { target: 'http://localhost:8080', ws: true },
       '/health': 'http://localhost:8080'
     }
   }

@@ -1659,7 +1659,7 @@ export default function Usage() {
 
   useAutoRefresh(async () => {
     await Promise.all([reloadSilently(), loadLogs(true), loadErrorSummary()])
-  }, 15_000, !loading && !logsLoading)
+  }, 15_000, !loading && !logsLoading, { topics: ['usage', 'settings'] })
 
   useEffect(() => {
     persistUsageVisibleColumns(visibleColumns)

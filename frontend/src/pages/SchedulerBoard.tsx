@@ -78,7 +78,7 @@ export default function SchedulerBoard() {
     load: loadSchedulerData,
   })
 
-  useAutoRefresh(reloadSilently, 15_000, !loading)
+  useAutoRefresh(reloadSilently, 15_000, !loading, { topics: ['runtime', 'usage', 'accounts', 'settings'] })
 
   useEffect(() => () => requestAbortRef.current?.abort(), [])
 

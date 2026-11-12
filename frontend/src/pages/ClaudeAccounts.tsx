@@ -805,7 +805,7 @@ export default function ClaudeAccounts({ headerSlot }: { headerSlot?: ReactNode 
     await reload({ silent: true });
     setPageStatsToken((token) => token + 1);
     await loadAnalysis(true);
-  }, 30_000, !loading);
+  }, 30_000, !loading, { topics: ['accounts', 'usage'], minEventIntervalMs: 5000 });
 
   useEffect(() => {
     void reload();
@@ -1020,6 +1020,11 @@ export default function ClaudeAccounts({ headerSlot }: { headerSlot?: ReactNode 
     return () => controller.abort();
   }, [accountIDsKey, pageStatsToken]);
 
+  const refreshLiveStateRef = useRef<() => Promise<void>>(async () => {});
+  useAutoRefresh(() => refreshLiveStateRef.current(), 60_000, Boolean(accountIDsKey), {
+    topics: ["runtime", "accounts"], minEventIntervalMs: 1000,
+  });
+
   // 当前页会话占用是易变状态，单独轻量轮询，避免把整页账号快照频繁
   // 重拉；切页/卸载时立即取消，保证旧页数据不会覆盖新页。
   useEffect(() => {
@@ -1050,13 +1055,11 @@ export default function ClaudeAccounts({ headerSlot }: { headerSlot?: ReactNode 
       }
     };
     void loadLiveState();
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void loadLiveState();
-    }, 5000);
+    refreshLiveStateRef.current = loadLiveState;
     return () => {
       active = false;
       controller.abort();
-      window.clearInterval(timer);
+      refreshLiveStateRef.current = async () => {};
     };
   }, [accountIDsKey]);
 

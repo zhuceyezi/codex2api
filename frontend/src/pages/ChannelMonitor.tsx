@@ -55,7 +55,7 @@ export default function ChannelMonitor() {
       window.clearInterval(tick)
     }
   }, [])
-  useAutoRefresh(reloadSilently, 30_000, !loading)
+  useAutoRefresh(reloadSilently, 30_000, !loading, { topics: ['accounts', 'proxies', 'runtime'], minEventIntervalMs: 30_000 })
 
   const items = useMemo(
     () => [...data.items].sort((left, right) => {

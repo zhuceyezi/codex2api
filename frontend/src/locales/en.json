@@ -740,6 +740,8 @@
     "restartTimeout": "The service may still be restarting. Please refresh the page manually in a moment to see the new version.",
     "logout": "Log out",
     "refresh": "Refresh",
+    "liveUpdates": "Live updates",
+    "liveUpdateInterval": "Live, at least {{seconds}}s apart",
     "autoRefresh": "Auto refresh",
     "autoRefreshOff": "Auto refresh off",
     "autoRefreshEvery": "Every {{seconds}}s",

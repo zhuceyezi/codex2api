@@ -1,36 +1,17 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api";
+import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { Badge } from "./ui/badge";
-
-const REFRESH_INTERVAL_MS = 5_000;
 
 export function useAPIKeyConcurrency() {
   const [counts, setCounts] = useState<Record<string, number> | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    let pending = false;
-    const refresh = async () => {
-      if (pending || document.hidden) return;
-      pending = true;
-      try {
-        const response = await api.getAPIKeyConcurrency();
-        if (!cancelled) setCounts(response.concurrency);
-      } catch {
-        // 暂时读取失败时保留上次快照，下一次轮询重试。
-      } finally {
-        pending = false;
-      }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, []);
+  const refresh = async () => {
+    const response = await api.getAPIKeyConcurrency();
+    setCounts(response.concurrency);
+  };
+  useEffect(() => { void refresh().catch(() => undefined); }, []);
+  useAutoRefresh(refresh, 60_000, true, { topics: ["runtime", "keys"], minEventIntervalMs: 1000 });
   return counts;
 }
 
