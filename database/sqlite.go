@@ -111,6 +111,10 @@ func (db *DB) configureSQLite(ctx context.Context) error {
 func (db *DB) migrateSQLite(ctx context.Context) error {
 	statements := []string{
 		codexClientVersionCacheSchema,
+		`CREATE TABLE IF NOT EXISTS key_usage_account_permissions (key_id INTEGER PRIMARY KEY, view_enabled BOOLEAN NOT NULL DEFAULT 0, reset_enabled BOOLEAN NOT NULL DEFAULT 0);`,
+		`CREATE TABLE IF NOT EXISTS key_usage_reset_attempts (request_id TEXT PRIMARY KEY, key_id INTEGER NOT NULL, account_id INTEGER NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
+		`CREATE TABLE IF NOT EXISTS key_usage_reset_leases (scope TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at BIGINT NOT NULL);`,
+		`CREATE TABLE IF NOT EXISTS key_usage_reset_cooldowns (scope TEXT PRIMARY KEY, expires_at BIGINT NOT NULL);`,
 		`CREATE TABLE IF NOT EXISTS accounts (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT DEFAULT '',
@@ -288,6 +292,7 @@ func (db *DB) migrateSQLite(ctx context.Context) error {
 					visible_channels_config TEXT DEFAULT '{}',
 					channel_test_config TEXT DEFAULT '{}',
 					antigravity_config TEXT DEFAULT '{}',
+					kiro_config TEXT DEFAULT '{}',
 					max_concurrency INTEGER DEFAULT 2,
 				global_rpm INTEGER DEFAULT 0,
 				test_model TEXT DEFAULT 'gpt-5.5',
@@ -653,6 +658,7 @@ func (db *DB) migrateSQLite(ctx context.Context) error {
 		{"system_settings", "visible_channels_config", "TEXT DEFAULT '{}'"},
 		{"system_settings", "channel_test_config", "TEXT DEFAULT '{}'"},
 		{"system_settings", "antigravity_config", "TEXT DEFAULT '{}'"},
+		{"system_settings", "kiro_config", "TEXT DEFAULT '{}'"},
 		{"system_settings", "test_content", "TEXT DEFAULT 'hi'"},
 		{"system_settings", "pg_max_conns", "INTEGER DEFAULT 50"},
 		{"system_settings", "redis_pool_size", "INTEGER DEFAULT 30"},

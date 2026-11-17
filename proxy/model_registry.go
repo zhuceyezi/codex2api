@@ -50,6 +50,7 @@ type ModelCatalog struct {
 	GrokModels        []string   `json:"grok_models,omitempty"`
 	AntigravityModels []string   `json:"antigravity_models,omitempty"`
 	ClaudeModels      []string   `json:"claude_models,omitempty"`
+	KiroModels        []string   `json:"kiro_models,omitempty"`
 	LastSyncedAt      *time.Time `json:"last_synced_at,omitempty"`
 	SourceURL         string     `json:"source_url"`
 	Warning           string     `json:"warning,omitempty"`
@@ -97,6 +98,15 @@ var builtinModelInfos = []ModelInfo{
 	// would never be discovered there; manifest learning does admit non-versioned
 	// gpt-* slugs (issue #624), but a builtin row is still needed for cold start.
 	modelInfoForID("gpt-reserve", ModelSourceBuiltin),
+	modelInfoForID("gpt-image-2.6-flare", ModelSourceBuiltin),
+	modelInfoForID("gpt-image-2.6-flare-2k", ModelSourceBuiltin),
+	modelInfoForID("gpt-image-2.6-flare-4k", ModelSourceBuiltin),
+	modelInfoForID("gpt-image-2.6-sunburst", ModelSourceBuiltin),
+	modelInfoForID("gpt-image-2.6-sunburst-2k", ModelSourceBuiltin),
+	modelInfoForID("gpt-image-2.6-sunburst-4k", ModelSourceBuiltin),
+	modelInfoForID("gpt-image-2.6", ModelSourceBuiltin),
+	modelInfoForID("gpt-image-2.6-2k", ModelSourceBuiltin),
+	modelInfoForID("gpt-image-2.6-4k", ModelSourceBuiltin),
 	modelInfoForID("gpt-image-2.5-flare", ModelSourceBuiltin),
 	modelInfoForID("gpt-image-2.5-flare-2k", ModelSourceBuiltin),
 	modelInfoForID("gpt-image-2.5-flare-4k", ModelSourceBuiltin),

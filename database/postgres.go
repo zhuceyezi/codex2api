@@ -1131,6 +1131,10 @@ func (db *DB) migrate(ctx context.Context) error {
 		return db.migrateSQLite(ctx)
 	}
 	query := codexClientVersionCacheSchema + `;
+	CREATE TABLE IF NOT EXISTS key_usage_account_permissions (key_id BIGINT PRIMARY KEY, view_enabled BOOLEAN NOT NULL DEFAULT FALSE, reset_enabled BOOLEAN NOT NULL DEFAULT FALSE);
+	CREATE TABLE IF NOT EXISTS key_usage_reset_attempts (request_id TEXT PRIMARY KEY, key_id BIGINT NOT NULL, account_id BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+	CREATE TABLE IF NOT EXISTS key_usage_reset_leases (scope TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at BIGINT NOT NULL);
+	CREATE TABLE IF NOT EXISTS key_usage_reset_cooldowns (scope TEXT PRIMARY KEY, expires_at BIGINT NOT NULL);
 	CREATE TABLE IF NOT EXISTS accounts (
 		id            SERIAL PRIMARY KEY,
 		name          VARCHAR(255) DEFAULT '',
@@ -1365,6 +1369,7 @@ func (db *DB) migrate(ctx context.Context) error {
 				visible_channels_config TEXT DEFAULT '{}',
 				channel_test_config TEXT DEFAULT '{}',
 				antigravity_config TEXT DEFAULT '{}',
+				kiro_config TEXT DEFAULT '{}',
 				max_concurrency    INT DEFAULT 2,
 			global_rpm         INT DEFAULT 0,
 			test_model         VARCHAR(100) DEFAULT 'gpt-5.5',
@@ -1441,6 +1446,7 @@ func (db *DB) migrate(ctx context.Context) error {
 	ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS visible_channels_config TEXT DEFAULT '{}';
 	ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS channel_test_config TEXT DEFAULT '{}';
 	ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS antigravity_config TEXT DEFAULT '{}';
+	ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS kiro_config TEXT DEFAULT '{}';
 	ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS test_content TEXT DEFAULT 'hi';
 	ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS pg_max_conns INT DEFAULT 50;
 	ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS redis_pool_size INT DEFAULT 30;
@@ -1930,6 +1936,7 @@ const (
 	UpstreamChannelGrok        = "grok"
 	UpstreamChannelAntigravity = "antigravity"
 	UpstreamChannelClaude      = "claude"
+	UpstreamChannelKiro        = "kiro"
 )
 
 // ResolveUpstreamChannel 归一 Key 的上游渠道限定；未知值一律视为不限（auto）。
@@ -1943,6 +1950,8 @@ func (l APIKeyLimits) ResolveUpstreamChannel() string {
 		return UpstreamChannelAntigravity
 	case UpstreamChannelClaude:
 		return UpstreamChannelClaude
+	case UpstreamChannelKiro:
+		return UpstreamChannelKiro
 	}
 	return UpstreamChannelAuto
 }
@@ -1957,9 +1966,11 @@ func accountChannelFilterSQL(channel, upstreamTypeExpr string) string {
 		return ` AND ` + upstreamTypeExpr + ` = 'antigravity'`
 	case UpstreamChannelClaude:
 		return ` AND ` + upstreamTypeExpr + ` = 'claude'`
+	case UpstreamChannelKiro:
+		return ` AND ` + upstreamTypeExpr + ` = 'kiro'`
 	case UpstreamChannelCodex:
 		// Blank legacy rows and OpenAI Responses relays remain in the Codex view.
-		return ` AND ` + upstreamTypeExpr + ` NOT IN ('grok', 'antigravity', 'claude')`
+		return ` AND ` + upstreamTypeExpr + ` NOT IN ('grok', 'antigravity', 'claude', 'kiro')`
 	default:
 		return ""
 	}

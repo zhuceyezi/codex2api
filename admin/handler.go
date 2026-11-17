@@ -151,6 +151,18 @@ type Handler struct {
 	reqCountCache      map[string]*requestCountCacheEntry
 	reqCountRefreshMu  sync.Mutex
 	reqCountRefreshing map[string]bool
+	// reqCountRefreshBreakdown is true while the in-flight channel refresh
+	// includes error-code and model breakdowns (small pools). The paged list
+	// reuses that scan instead of starting a second one.
+	reqCountRefreshBreakdown map[string]bool
+	// pageRequestCountHook, when set, replaces the usage-log aggregation.
+	// Production leaves it nil. Tests use it to simulate a slow scan.
+	pageRequestCountHook func(context.Context, []int64) (map[int64]*database.AccountRequestCount, error)
+	// Visible-page breakdowns for pools whose channel cache stores totals
+	// only. Filled off the list request.
+	pageBreakdownMu       sync.Mutex
+	pageBreakdown         map[string]*pageRequestBreakdown
+	pageBreakdownInflight map[string]string
 	// 大池分批聚合的断点续跑半成品,见 requestCountStaging。
 	reqCountStagingMu sync.Mutex
 	reqCountStaging   map[string]*requestCountStaging
@@ -1033,6 +1045,8 @@ func parseUsageChannel(c *gin.Context) string {
 		return database.UpstreamChannelAntigravity
 	case database.UpstreamChannelClaude:
 		return database.UpstreamChannelClaude
+	case database.UpstreamChannelKiro:
+		return database.UpstreamChannelKiro
 	}
 	return ""
 }
@@ -1112,6 +1126,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	keyUsage.GET("/concurrency", h.GetPublicAPIKeyConcurrency)
 	keyUsage.POST("/live-ticket", h.GetPublicLiveDataTicket)
 	r.GET("/api/live-data", h.LiveDataSocket)
+	keyUsage.GET("/accounts", h.GetPublicKeyUsageAccounts)
+	keyUsage.POST("/accounts/:id/reset-credits", h.ResetPublicKeyUsageAccountCredits)
 
 	// 账号自助添加公开门户（无 admin 鉴权；开关门控 + IP 限流；见 self_service.go）
 	accountPortal := r.Group("/api/account-portal")
@@ -1150,6 +1166,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	})
 	api.POST("/live-ticket", h.GetAdminLiveDataTicket)
 	api.GET("/stats", h.GetStats)
+	api.GET("/key-usage-account-permissions/:id", h.GetKeyUsageAccountPermissions)
+	api.PUT("/key-usage-account-permissions/:id", h.SetKeyUsageAccountPermissions)
 	api.GET("/accounts", h.ListAccounts)
 	api.GET("/accounts/analysis", h.GetAccountAnalysis)
 	api.GET("/accounts/page-stats", h.GetAccountPageStats)
@@ -1185,6 +1203,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	api.GET("/accounts/claude/export", h.ExportClaudeAccounts)
 	api.POST("/accounts/:id/claude/models", h.RefreshClaudeModels)
 	api.POST("/accounts/claude/models/refresh", h.RefreshAllClaudeModels)
+	h.registerKiroRoutes(api)
 	api.POST("/accounts/antigravity", h.AddAntigravityAccount)
 	api.POST("/accounts/antigravity/models", h.FetchAntigravityModels)
 	api.POST("/accounts/antigravity/batch-models", h.BatchUpdateAntigravityModels)
@@ -1335,6 +1354,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	api.PUT("/settings/channel-tests", h.UpdateChannelTestSettings)
 	api.GET("/settings/antigravity", h.GetAntigravitySettings)
 	api.PUT("/settings/antigravity", h.UpdateAntigravitySettings)
+	api.GET("/settings/kiro", h.GetKiroSettings)
+	api.PUT("/settings/kiro", h.UpdateKiroSettings)
 	api.POST("/settings/background-upload", h.UploadBackgroundAsset)
 	api.POST("/settings/image-storage/test", h.TestImageStorageConnection)
 	api.GET("/prompt-filter/logs", h.ListPromptFilterLogs)
@@ -1597,6 +1618,7 @@ func summarizeDashboardAccounts(rows []*database.AccountRow, runtimeAccounts []*
 		database.UpstreamChannelGrok:        {},
 		database.UpstreamChannelAntigravity: {},
 		database.UpstreamChannelClaude:      {},
+		database.UpstreamChannelKiro:        {},
 	}
 	counts.total = len(rows)
 	for _, row := range rows {
@@ -1613,6 +1635,8 @@ func summarizeDashboardAccounts(rows []*database.AccountRow, runtimeAccounts []*
 			channel = database.UpstreamChannelAntigravity
 		} else if strings.EqualFold(upstreamType, auth.UpstreamClaude) {
 			channel = database.UpstreamChannelClaude
+		} else if strings.EqualFold(upstreamType, auth.UpstreamKiro) {
+			channel = database.UpstreamChannelKiro
 		}
 		usingCredits := false
 		acc := runtimeByID[row.ID]
@@ -1628,6 +1652,8 @@ func summarizeDashboardAccounts(rows []*database.AccountRow, runtimeAccounts []*
 				channel = database.UpstreamChannelGrok
 			} else if acc.IsClaudeOAuth() {
 				channel = database.UpstreamChannelClaude
+			} else if acc.IsKiro() {
+				channel = database.UpstreamChannelKiro
 			}
 		}
 		perChannel := channelCounts[channel]
@@ -1661,7 +1687,7 @@ func isDashboardAbnormalAccount(status string) bool {
 
 func isDashboardUnsampledAccount(row *database.AccountRow, acc *auth.Account) bool {
 	if acc != nil {
-		if acc.IsGrokAPI() || acc.IsOpenAIResponsesAPI() || acc.IsAntigravityAPI() {
+		if acc.IsGrokAPI() || acc.IsOpenAIResponsesAPI() || acc.IsAntigravityAPI() || acc.IsKiro() {
 			return false
 		}
 		snapshot := acc.GetAccountListRuntimeSnapshot()
@@ -1682,7 +1708,8 @@ func isDashboardUnsampledAccount(row *database.AccountRow, acc *auth.Account) bo
 	upstreamType := strings.TrimSpace(row.GetCredential("upstream_type"))
 	if strings.EqualFold(upstreamType, auth.UpstreamGrok) ||
 		strings.EqualFold(upstreamType, auth.UpstreamOpenAIResponses) ||
-		strings.EqualFold(upstreamType, auth.UpstreamAntigravity) {
+		strings.EqualFold(upstreamType, auth.UpstreamAntigravity) ||
+		strings.EqualFold(upstreamType, auth.UpstreamKiro) {
 		return false
 	}
 	status := strings.ToLower(strings.TrimSpace(row.Status))
@@ -1745,6 +1772,11 @@ type accountResponse struct {
 	AntigravityAPI                bool                        `json:"antigravity_api,omitempty"`
 	ClaudeAPI                     bool                        `json:"claude_api,omitempty"`
 	ClaudeAuthKind                string                      `json:"claude_auth_kind,omitempty"`
+	KiroAPI                       bool                        `json:"kiro_api,omitempty"`
+	KiroAuthKind                  string                      `json:"kiro_auth_kind,omitempty"`
+	KiroLoginSource               string                      `json:"kiro_login_source,omitempty"`
+	KiroUsage                     json.RawMessage             `json:"kiro_usage,omitempty"`
+	KiroPlan                      string                      `json:"kiro_plan,omitempty"`
 	ClaudeBaseURL                 string                      `json:"claude_base_url,omitempty"`
 	AntigravityAuthKind           string                      `json:"antigravity_auth_kind,omitempty"`
 	AgentIdentity                 bool                        `json:"agent_identity,omitempty"`
@@ -2001,16 +2033,16 @@ func (h *Handler) ListAccounts(c *gin.Context) {
 
 	var reqCounts map[int64]*database.AccountRequestCount
 	var usage5h, usage7d map[int64]*database.AccountTimeRangeUsage
+	var requestCountsPending bool
 	if view == "page" {
 		pageIDs := make([]int64, 0, len(rows))
 		for _, row := range rows {
 			pageIDs = append(pageIDs, row.ID)
 		}
-		reqCounts, err = h.db.GetAccountRequestCountsByIDs(ctx, pageIDs)
-		if err != nil {
-			log.Printf("获取当前页账号请求统计失败: %v", err)
-			reqCounts = make(map[int64]*database.AccountRequestCount)
-		}
+		// Totals, error codes, and model mix scan usage_logs. A slow scan must
+		// not block the account rows: read the channel cache, or fill this
+		// page in the background, and let stats_state tell the client to poll.
+		reqCounts, requestCountsPending = h.pageRequestCounts(channel, pageIDs)
 		usage5h = make(map[int64]*database.AccountTimeRangeUsage)
 		usage7d = make(map[int64]*database.AccountTimeRangeUsage)
 	} else {
@@ -2074,11 +2106,15 @@ func (h *Handler) ListAccounts(c *gin.Context) {
 	}
 
 	if pageSelection != nil {
+		statsState := pageSelection.StatsState
+		if requestCountsPending {
+			statsState = combineAccountStatsState(statsState, "stale")
+		}
 		c.JSON(http.StatusOK, accountsPageResponse{
 			Accounts: accounts,
 			Page:     pageSelection.Page, PageSize: pageSelection.PageSize, Total: pageSelection.Total,
 			Summary: pageSelection.Summary, Facets: pageSelection.Facets,
-			SnapshotAt: pageSelection.SnapshotAt.Format(time.RFC3339), StatsState: pageSelection.StatsState,
+			SnapshotAt: pageSelection.SnapshotAt.Format(time.RFC3339), StatsState: statsState,
 			DisabledSorts: pageSelection.DisabledSorts,
 		})
 		return
@@ -3537,7 +3573,7 @@ func (h *Handler) getCachedRequestCounts() map[int64]*database.AccountRequestCou
 		log.Printf("获取账号请求统计失败: %v", err)
 		return make(map[int64]*database.AccountRequestCount)
 	}
-	h.storeRequestCountCache(cacheKey, counts, nil, time.Time{})
+	h.storeRequestCountCache(cacheKey, counts, nil, time.Time{}, false, nil)
 	return counts
 }
 
@@ -6433,7 +6469,7 @@ type batchUpdateAccountsReq struct {
 
 func (h *Handler) accountOperationIdentity(id int64) (string, string) {
 	h.accountListCacheMu.RLock()
-	for _, channel := range []string{database.UpstreamChannelCodex, database.UpstreamChannelGrok, database.UpstreamChannelAntigravity, database.UpstreamChannelClaude} {
+	for _, channel := range []string{database.UpstreamChannelCodex, database.UpstreamChannelGrok, database.UpstreamChannelAntigravity, database.UpstreamChannelClaude, database.UpstreamChannelKiro} {
 		snapshot := h.accountListCache[channel]
 		if snapshot == nil {
 			continue
@@ -9132,6 +9168,8 @@ var knownAPIKeyPlanFilters = map[string]struct{}{
 	// Antigravity keys derived from Google tier ids (g1-ultra-tier → ultra,
 	// standard-tier → standard); free/pro/api are shared with the lists above.
 	"ultra": {}, "standard": {},
+	// Kiro 账号按 auth.KiroPlanKey 从上游订阅标题归一后的标识匹配。
+	"kiro free": {}, "kiro pro": {}, "kiro pro+": {}, "kiro max": {}, "kiro power": {}, "kiro student": {},
 }
 
 // cleanPlanAllow 归一账号套餐白名单:小写去空白、丢弃未知值并去重。
@@ -12997,6 +13035,7 @@ func (h *Handler) ListModels(c *gin.Context) {
 	// Keep claudeChannelModels for pricing/history, where those entries remain
 	// useful to operators.
 	catalog.ClaudeModels = h.claudeAvailableChannelModels()
+	catalog.KiroModels = h.kiroChannelModels()
 	c.JSON(http.StatusOK, catalog)
 }
 
