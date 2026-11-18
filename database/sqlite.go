@@ -630,6 +630,7 @@ func (db *DB) migrateSQLite(ctx context.Context) error {
 		{"usage_logs", "upstream_error_kind", "TEXT DEFAULT ''"},
 		{"usage_logs", "error_message", "TEXT DEFAULT ''"},
 		{"usage_logs", "credential_generation", "INTEGER NOT NULL DEFAULT 0"},
+		{"usage_logs", "quota_plan", "TEXT NOT NULL DEFAULT ''"},
 		{"system_settings", "continuous_retry_policy", "TEXT DEFAULT '{\"enabled\":false,\"catch_all\":false,\"categories\":[\"transport\",\"http_429\",\"http_5xx\",\"stream_error\"],\"status_codes\":[],\"error_codes\":[]}'"},
 		{"api_keys", "quota_limit", "REAL DEFAULT 0"},
 		{"api_keys", "quota_used", "REAL DEFAULT 0"},

@@ -241,6 +241,8 @@ type DB struct {
 
 	// 查询发现用量小时汇总落后于明细时通知维护协程修复，容量 1，重复通知合并。
 	usageHourlyRepairNotify chan struct{}
+	quotaCalibration        quotaCalibrationCache
+	quotaObservationsQueue  chan quotaObservation
 
 	// 配了 scope 累计额度的 API Key 集合（issue #439 v2）。落库热路径靠它跳过
 	// 绝大多数 Key，60s 刷新一次；管理端保存后会主动失效。
@@ -263,8 +265,8 @@ const (
 	maxUsageLogFlushIntervalSeconds     = 300
 
 	postgresMaxBindParams       = 65535
-	usageLogInsertColumnCount   = 73
-	maxUsageLogInsertRowsPerSQL = 890 // 73 cols * 890 = 64970 < 65535 PG bind limit
+	usageLogInsertColumnCount   = 74
+	maxUsageLogInsertRowsPerSQL = 890 // batchInsertLogs also enforces the bind limit
 
 	// usageLogBufferHardLimit 内存缓冲的硬上限。PG 长时间不可用时（维护、主从切换、
 	// 磁盘写满）失败批次会一直被放回缓冲区，没有上限的话内存一路涨到 OOM——那会把
@@ -320,6 +322,7 @@ type usageLogEntry struct {
 	StoreUsageLog        bool
 	AccountID            int64
 	CredentialGeneration int64
+	QuotaPlan            string
 	Channel              string
 	ClientIP             string
 	ClientUserAgent      string
@@ -536,6 +539,9 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 	}
 	// 用量小时汇总要在写入协程启动前定好回填边界：此后落库的日志由写入事务维护。
 	if !fromSchemaTemplate {
+		if err := db.ensureCodexQuotaSchema(ctx); err != nil {
+			return nil, fmt.Errorf("initialize weekly quota observations: %w", err)
+		}
 		if err := db.ensureUsageHourlySchema(ctx); err != nil {
 			return nil, fmt.Errorf("初始化用量小时汇总表失败: %w", err)
 		}
@@ -547,6 +553,7 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 	// 启动批量写入后台协程
 	db.startLogFlusher()
 	db.startUsageHourlyMaintainer(usageHourlyBackfill)
+	db.startCodexQuotaRecorder()
 
 	baselineInsert := `
 		INSERT INTO usage_stats_baseline (id) VALUES (1) ON CONFLICT DO NOTHING
@@ -1319,6 +1326,7 @@ func (db *DB) migrate(ctx context.Context) error {
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS upstream_error_kind VARCHAR(64) DEFAULT '';
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS error_message TEXT DEFAULT '';
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS credential_generation BIGINT NOT NULL DEFAULT 0;
+	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS quota_plan TEXT NOT NULL DEFAULT '';
 	-- idx_usage_logs_account_generation_created_at 不在此批次内创建：usage_logs 是
 	-- 生产最大表，非 CONCURRENTLY 建索引会持锁阻塞写入，且本批次运行在 10 秒启动
 	-- 超时的单个隐式事务里，大表下会超时回滚导致启动崩溃循环。改由
@@ -4536,6 +4544,7 @@ func (db *DB) InsertUsageLog(ctx context.Context, log *UsageLogInput) error {
 		StoreUsageLog:            storeUsageLog,
 		AccountID:                log.AccountID,
 		CredentialGeneration:     log.CredentialGeneration,
+		QuotaPlan:                clampUsageLogText(log.QuotaPlan, usageLogShortTextMaxLen),
 		Channel:                  clampUsageLogText(log.Channel, usageLogChannelMaxLen),
 		ClientIP:                 clampUsageLogText(log.ClientIP, usageLogShortTextMaxLen),
 		ClientUserAgent:          log.ClientUserAgent,
@@ -4623,9 +4632,10 @@ type UsageLogInput struct {
 	InjectedTurnState string
 	UpstreamTurnState string
 	AccountID         int64
-	// CredentialGeneration attributes internally-generated Grok traffic to the
-	// credential snapshot that issued it. Zero is legacy/unscoped traffic.
+	// CredentialGeneration identifies the account credentials used for scoped traffic.
+	// Zero is legacy/unscoped traffic.
 	CredentialGeneration int64
+	QuotaPlan            string
 	// Channel 是处理该请求的上游渠道（codex/grok），写入时固化，空值表示未知。
 	Channel              string
 	ClientIP             string
@@ -5028,8 +5038,8 @@ func (db *DB) insertSQLiteUsageLogBatch(ctx context.Context, batch []usageLogEnt
 				  requested_service_tier, actual_service_tier, billing_service_tier,
 				  api_key_id, api_key_name, api_key_masked, image_count, image_width, image_height, image_bytes, image_format, image_size, account_billed, user_billed,
 				  is_retry_attempt, attempt_index, upstream_error_kind, error_message, via_websocket,
-				  client_user_agent, upstream_user_agent, user_agent_overridden, turn_state_overridden, turn_state_rewrite_note, internal_reason, parent_request_id, prompt_policy_incident_id, request_id, upstream_request_id, upstream_proxy_id, upstream_proxy_name, injected_turn_state, upstream_turn_state, user_billing_mode, image_unit_price, billed_image_count, daybreak_program, video_seconds, created_at)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73)`)
+				  client_user_agent, upstream_user_agent, user_agent_overridden, turn_state_overridden, turn_state_rewrite_note, internal_reason, parent_request_id, prompt_policy_incident_id, request_id, upstream_request_id, upstream_proxy_id, upstream_proxy_name, injected_turn_state, upstream_turn_state, user_billing_mode, image_unit_price, billed_image_count, daybreak_program, video_seconds, created_at, quota_plan)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74)`)
 		if err != nil {
 			return fmt.Errorf("准备语句: %w", err)
 		}
@@ -5041,7 +5051,7 @@ func (db *DB) insertSQLiteUsageLogBatch(ctx context.Context, batch []usageLogEnt
 				e.RequestedServiceTier, e.ActualServiceTier, e.BillingServiceTier,
 				e.APIKeyID, e.APIKeyName, e.APIKeyMasked, e.ImageCount, e.ImageWidth, e.ImageHeight, e.ImageBytes, e.ImageFormat, e.ImageSize, e.AccountBilled, e.UserBilled,
 				e.IsRetryAttempt, e.AttemptIndex, e.UpstreamErrorKind, e.ErrorMessage, e.ViaWebsocket,
-				e.ClientUserAgent, e.UpstreamUserAgent, e.UserAgentOverridden, e.TurnStateOverridden, e.TurnStateRewriteNote, e.InternalReason, e.ParentRequestID, nullablePromptPolicyIncidentID(e.PromptPolicyIncidentID), e.RequestID, e.UpstreamRequestID, e.UpstreamProxyID, e.UpstreamProxyName, e.InjectedTurnState, e.UpstreamTurnState, e.UserBillingMode, e.ImageUnitPrice, e.BilledImageCount, e.DaybreakProgram, e.VideoSeconds, db.usageLogCreatedAtArg(e.CreatedAt))
+				e.ClientUserAgent, e.UpstreamUserAgent, e.UserAgentOverridden, e.TurnStateOverridden, e.TurnStateRewriteNote, e.InternalReason, e.ParentRequestID, nullablePromptPolicyIncidentID(e.PromptPolicyIncidentID), e.RequestID, e.UpstreamRequestID, e.UpstreamProxyID, e.UpstreamProxyName, e.InjectedTurnState, e.UpstreamTurnState, e.UserBillingMode, e.ImageUnitPrice, e.BilledImageCount, e.DaybreakProgram, e.VideoSeconds, db.usageLogCreatedAtArg(e.CreatedAt), e.QuotaPlan)
 			if err != nil {
 				return fmt.Errorf("执行插入: %w", err)
 			}
@@ -5146,7 +5156,7 @@ func (db *DB) batchInsertLogsChunk(ctx context.Context, tx *sql.Tx, batch []usag
 			e.RequestedServiceTier, e.ActualServiceTier, e.BillingServiceTier,
 			e.APIKeyID, e.APIKeyName, e.APIKeyMasked, e.ImageCount, e.ImageWidth, e.ImageHeight, e.ImageBytes, e.ImageFormat, e.ImageSize, e.AccountBilled, e.UserBilled,
 			e.IsRetryAttempt, e.AttemptIndex, e.UpstreamErrorKind, e.ErrorMessage, e.ViaWebsocket,
-			e.ClientUserAgent, e.UpstreamUserAgent, e.UserAgentOverridden, e.TurnStateOverridden, e.TurnStateRewriteNote, e.InternalReason, e.ParentRequestID, nullablePromptPolicyIncidentID(e.PromptPolicyIncidentID), e.RequestID, e.UpstreamRequestID, e.UpstreamProxyID, e.UpstreamProxyName, e.InjectedTurnState, e.UpstreamTurnState, e.UserBillingMode, e.ImageUnitPrice, e.BilledImageCount, e.DaybreakProgram, e.VideoSeconds, db.usageLogCreatedAtArg(e.CreatedAt))
+			e.ClientUserAgent, e.UpstreamUserAgent, e.UserAgentOverridden, e.TurnStateOverridden, e.TurnStateRewriteNote, e.InternalReason, e.ParentRequestID, nullablePromptPolicyIncidentID(e.PromptPolicyIncidentID), e.RequestID, e.UpstreamRequestID, e.UpstreamProxyID, e.UpstreamProxyName, e.InjectedTurnState, e.UpstreamTurnState, e.UserBillingMode, e.ImageUnitPrice, e.BilledImageCount, e.DaybreakProgram, e.VideoSeconds, db.usageLogCreatedAtArg(e.CreatedAt), e.QuotaPlan)
 		argIdx += usageLogInsertColumnCount
 	}
 
@@ -5155,7 +5165,7 @@ func (db *DB) batchInsertLogsChunk(ctx context.Context, tx *sql.Tx, batch []usag
 		requested_service_tier, actual_service_tier, billing_service_tier,
 		api_key_id, api_key_name, api_key_masked, image_count, image_width, image_height, image_bytes, image_format, image_size, account_billed, user_billed,
 		is_retry_attempt, attempt_index, upstream_error_kind, error_message, via_websocket,
-		client_user_agent, upstream_user_agent, user_agent_overridden, turn_state_overridden, turn_state_rewrite_note, internal_reason, parent_request_id, prompt_policy_incident_id, request_id, upstream_request_id, upstream_proxy_id, upstream_proxy_name, injected_turn_state, upstream_turn_state, user_billing_mode, image_unit_price, billed_image_count, daybreak_program, video_seconds, created_at)
+		client_user_agent, upstream_user_agent, user_agent_overridden, turn_state_overridden, turn_state_rewrite_note, internal_reason, parent_request_id, prompt_policy_incident_id, request_id, upstream_request_id, upstream_proxy_id, upstream_proxy_name, injected_turn_state, upstream_turn_state, user_billing_mode, image_unit_price, billed_image_count, daybreak_program, video_seconds, created_at, quota_plan)
 		VALUES %s
 		RETURNING id`, strings.Join(valueStrings, ","))
 
@@ -5268,6 +5278,7 @@ type UsageStats struct {
 	AvgDurationMs      float64             `json:"avg_duration_ms"`
 	ErrorRate          float64             `json:"error_rate"`
 	FeatureStats       UsageFeatureStat    `json:"feature_stats"`
+	QuotaPlans         []UsageQuotaPlan    `json:"quota_plans,omitempty"`
 	ModelStats         []UsageModelStat    `json:"model_stats"`
 	EndpointStats      []UsageEndpointStat `json:"endpoint_stats"`
 	APIKeyStats        []UsageAPIKeyStat   `json:"api_key_stats"`
@@ -5275,6 +5286,7 @@ type UsageStats struct {
 
 // UsageModelStat 按计费模型聚合的请求和金额统计。
 type UsageModelStat struct {
+	QuotaPercent  float64 `json:"quota_percent,omitempty"`
 	Model         string  `json:"model"`
 	Requests      int64   `json:"requests"`
 	Tokens        int64   `json:"tokens"`

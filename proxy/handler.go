@@ -1698,7 +1698,7 @@ func (h *Handler) logUsage(input *database.UsageLogInput) {
 	// this attempt. Resolve it from AccountID at the common sink so success,
 	// failure and transport-retry paths cannot accidentally omit it. A retry
 	// that switches accounts naturally resolves the replacement account here.
-	// Non-Grok and unresolved accounts deliberately remain legacy/unscoped (0).
+	// Codex quota attribution also records the subscription plan below.
 	input = database.SnapshotUsageLogBilling(input)
 	h.populateUsageCredentialGeneration(input)
 	// scope 维度预算（issue #439）在日志落库前先吃到这笔消耗，抵掉窗口聚合缓存的滞后。
@@ -1720,6 +1720,11 @@ func (h *Handler) logUsage(input *database.UsageLogInput) {
 					input.Channel = database.UpstreamChannelKiro
 				}
 			}
+		}
+	}
+	if input.Channel == database.UpstreamChannelCodex && h.store != nil && input.AccountID > 0 {
+		if account := h.store.FindByID(input.AccountID); account != nil {
+			input.QuotaPlan, input.CredentialGeneration = account.WeeklyQuotaPlan()
 		}
 	}
 	// 过载熔断统计（仅 Codex 渠道，需在渠道固化之后）。

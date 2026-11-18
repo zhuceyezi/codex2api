@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
@@ -128,6 +129,9 @@ func (q *usageFramePersistQueue) persist(s *Store, job usageFramePersistJob) {
 	// Supersession fences the captured quota values, not the pending side
 	// effects below, which always read current runtime state under their locks.
 	if job.persistUsage && !superseded {
+		if job.has7d {
+			s.recordWeeklyQuota(acc, job.updatedAt7d)
+		}
 		switch {
 		case job.has7d && job.has5h:
 			err = s.db.UpdateUsageSnapshotFull(ctx, job.dbID, job.pct7d, job.reset7dAt, job.pct5h, job.reset5hAt, job.updatedAt7d, job.updatedAt5h)
@@ -241,4 +245,26 @@ func (s *Store) persistUsageFramePlan(acc *Account) error {
 	}
 	acc.mu.Unlock()
 	return nil
+}
+
+// Use only observations whose upstream window was identified as seven days.
+func (s *Store) recordWeeklyQuota(acc *Account, observedAt time.Time) {
+	acc.mu.RLock()
+	eligible := acc.UsagePercent7dValid && acc.UsageUpdatedAt.Equal(observedAt) && acc.Window7dSeconds == 7*24*60*60
+	accountID, generation, plan := acc.DBID, acc.CredentialGeneration, acc.PlanType
+	used, reset := acc.UsagePercent7d, acc.Reset7dAt
+	acc.mu.RUnlock()
+	if eligible {
+		s.db.EnqueueCodexWeeklyQuota(accountID, generation, plan, used, reset, observedAt)
+	}
+}
+
+// WeeklyQuotaPlan attributes a completed Codex request to its account plan.
+func (a *Account) WeeklyQuotaPlan() (string, int64) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.Window7dSeconds != 7*24*60*60 {
+		return "", 0
+	}
+	return strings.ToLower(strings.TrimSpace(a.PlanType)), a.CredentialGeneration
 }

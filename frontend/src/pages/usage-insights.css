@@ -34,6 +34,8 @@
 .usage-metric-toggle button:hover { color: var(--color-foreground); }
 .usage-metric-toggle button[aria-pressed="true"] { background: var(--color-card); color: var(--color-foreground); box-shadow: 0 1px 4px color-mix(in srgb, var(--color-foreground) 9%, transparent); }
 .usage-metric-toggle button:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+.usage-quota-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 12px; color: var(--color-muted-foreground); font-size: 12px; }
+.usage-quota-summary strong { color: var(--color-foreground); font-weight: 600; }
 .usage-model-layout { display: grid; flex: 1; grid-template-columns: 154px minmax(0, 1fr); align-items: center; gap: 20px; min-height: 218px; }
 .usage-model-figure { min-width: 0; margin: 0; text-align: center; }
 .usage-model-chart { position: relative; height: 154px; width: 154px; margin: auto; }

@@ -11565,6 +11565,8 @@ func (s *Store) PublishUsageSnapshot(acc *Account, pct7d float64, observedAt tim
 		return false
 	}
 
+	s.recordWeeklyQuota(acc, observedAt)
+
 	// 如果有 5h 数据，使用完整存储
 	if pct5h, ok := acc.GetUsagePercent5h(); ok {
 		reset5hAt := acc.GetReset5hAt()

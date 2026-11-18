@@ -26,7 +26,7 @@ import { useDataLoader } from '../hooks/useDataLoader'
 import { useConfirmDialog } from '../hooks/useConfirmDialog'
 import { useToast } from '../hooks/useToast'
 import { DEFAULT_PAGE_SIZE_OPTIONS, usePersistedPageSize } from '../hooks/usePersistedPageSize'
-import type { APIKeyRow, OpsErrorSummary, SystemSettings, UsageAPIKeyStat, UsageEndpointStat, UsageFeatureStats, UsageLog, UsageModelStat, UsageStats, PromptFilterLog, PromptPolicyIncidentDetailResponse } from '../types'
+import type { APIKeyRow, OpsErrorSummary, SystemSettings, UsageAPIKeyStat, UsageEndpointStat, UsageFeatureStats, UsageLog, UsageModelStat, UsageQuotaPlan, UsageStats, PromptFilterLog, PromptPolicyIncidentDetailResponse } from '../types'
 import { cn, formatCompactEmail } from '../lib/utils'
 import { formatUsageNumber as formatTokens } from '../lib/usageFormat'
 import { buildModelShareData, formatSharePercent, type ModelShareMetric } from '../lib/usageInsights'
@@ -571,19 +571,45 @@ function CostTooltipRow({ label, value, valueClassName = 'font-medium text-white
   )
 }
 
-function ModelStatsPanel({ stats, showFullUsageNumbers }: {
+const modelMetricLabels = {
+  amount: 'usage.modelPieAmount',
+  requests: 'usage.modelPieRequests',
+  quota: 'usage.modelPieQuota',
+} as const
+
+function quotaPlanLabel(plan: string): string {
+  return plan.charAt(0).toUpperCase() + plan.slice(1)
+}
+
+function ModelStatsPanel({ stats, quotaPlans = [], showFullUsageNumbers }: {
+  quotaPlans?: UsageQuotaPlan[]
   stats: UsageModelStat[]
   showFullUsageNumbers: boolean
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [selectedMetric, setSelectedMetric] = useState<ModelShareMetric | null>(null)
+  const [selectedPlan, setSelectedPlan] = useState('')
   const rankingRef = useRef<HTMLDivElement>(null)
+  const plan = quotaPlans.find((item) => item.plan === selectedPlan) ?? quotaPlans[0]
   const hasAmount = stats.some((item) => safeNumber(item.user_billed) > 0)
-  const metric = selectedMetric ?? (hasAmount ? 'amount' : 'requests')
-  const { items, total } = buildModelShareData(stats, metric, t('usage.modelStatsOther'))
-  const metricLabel = t(metric === 'amount' ? 'usage.modelPieAmount' : 'usage.modelPieRequests')
-  const centerValue = metric === 'amount' ? formatCostCardValue(total) : formatTokens(total, showFullUsageNumbers)
-  const chartValue = centerValue.length > 10 ? `${metric === 'amount' ? '$' : ''}${formatTokens(total, false)}` : centerValue
+  const fallbackMetric = hasAmount ? 'amount' : 'requests'
+  const metric = selectedMetric === 'quota' && !plan ? fallbackMetric : selectedMetric ?? fallbackMetric
+  const isQuota = metric === 'quota'
+  const { items, total } = buildModelShareData(isQuota ? plan?.models ?? [] : stats, metric, t('usage.modelStatsOther'))
+  const metricLabel = t(modelMetricLabels[metric])
+  const chartLabel = isQuota ? t('usage.modelQuotaWindow') : metricLabel
+  const percentFormat = new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 2, style: 'percent' })
+  const formatMetricValue = (value: number) => {
+    if (isQuota) {
+      return value > 0 && value < 0.01 ? '<0.01%' : `≈${percentFormat.format(value / 100)}`
+    }
+    return metric === 'amount' ? formatCostCardValue(value) : formatTokens(value, showFullUsageNumbers)
+  }
+  const centerValue = formatMetricValue(total)
+  const chartValue = !isQuota && centerValue.length > 10
+    ? `${metric === 'amount' ? '$' : ''}${formatTokens(total, false)}`
+    : centerValue
+  const metrics: ModelShareMetric[] = plan ? ['amount', 'requests', 'quota'] : ['amount', 'requests']
 
   return (
     <PanelShell className="usage-model-panel">
@@ -592,26 +618,44 @@ function ModelStatsPanel({ stats, showFullUsageNumbers }: {
         icon={<BarChart3 />}
         title={t('usage.modelStatsTitle')}
         description={t('usage.modelStatsDesc')}
-        trailing={items.length > 0 ? (
+        trailing={stats.length > 0 || plan ? (
           <div className="usage-metric-toggle" role="group" aria-label={t('usage.modelPieTitle')}>
-            {(['amount', 'requests'] as const).map((value) => (
+            {metrics.map((value) => (
               <button key={value} type="button" aria-pressed={metric === value} onClick={() => {
                 setSelectedMetric(value)
                 if (rankingRef.current) rankingRef.current.scrollTop = 0
               }}>
-                {t(value === 'amount' ? 'usage.modelPieAmount' : 'usage.modelPieRequests')}
+                {t(modelMetricLabels[value])}
               </button>
             ))}
           </div>
         ) : undefined}
       />
+      {isQuota && plan && (
+        <div className="usage-quota-summary">
+          {quotaPlans.length > 1 ? (
+            <Select compact className="min-w-28"
+              aria-label={t('usage.modelQuotaPlan')}
+              value={plan.plan}
+              onValueChange={setSelectedPlan}
+              options={quotaPlans.map(({ plan }) => ({ label: quotaPlanLabel(plan), value: plan }))}
+            />
+          ) : <strong>{quotaPlanLabel(plan.plan)}</strong>}
+          {plan.usd_per_percent !== undefined && (
+            <span>{t('usage.modelQuotaRate', { amount: formatCostCardValue(plan.usd_per_percent) })}</span>
+          )}
+          <span>{t('usage.modelQuotaSamples', { count: plan.samples })}</span>
+        </div>
+      )}
       {items.length === 0 ? (
-        <EmptyPanel accent="blue" icon={<BarChart3 />} text={t('usage.noModelStats')} />
+        <EmptyPanel accent="blue" icon={<BarChart3 />}
+          text={t(isQuota && !plan?.usd_per_percent ? 'usage.modelQuotaCollecting' : 'usage.noModelStats')}
+        />
       ) : (
         <>
           <div className="usage-model-layout">
             <figure className="usage-model-figure">
-              <div className="usage-model-chart" title={centerValue} role="img" aria-label={`${t('usage.modelPieTitle')} · ${metricLabel} · ${centerValue}`}>
+              <div className="usage-model-chart" title={centerValue} role="img" aria-label={`${t('usage.modelPieTitle')} · ${chartLabel} · ${centerValue}`}>
                 {total > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart accessibilityLayer={false}>
@@ -620,7 +664,7 @@ function ModelStatsPanel({ stats, showFullUsageNumbers }: {
                       </Pie>
                       <RechartsTooltip
                         cursor={false}
-                        formatter={(value, name) => [metric === 'amount' ? formatCostCardValue(Number(value ?? 0)) : formatTokens(Number(value ?? 0), showFullUsageNumbers), String(name ?? '')]}
+                        formatter={(value, name) => [formatMetricValue(Number(value ?? 0)), String(name ?? '')]}
                         contentStyle={{ backgroundColor: 'var(--color-card)', border: '1px solid var(--color-border)', borderRadius: 12, fontSize: 12 }}
                         itemStyle={{ color: 'var(--color-foreground)' }}
                       />
@@ -630,14 +674,14 @@ function ModelStatsPanel({ stats, showFullUsageNumbers }: {
                 <div className="usage-model-chart-center">
                   <span className="usage-eyebrow">{t('usage.modelSubtotal')}</span>
                   <strong>{chartValue}</strong>
-                  <span>{metricLabel}</span>
+                  <span>{chartLabel}</span>
                 </div>
               </div>
             </figure>
             <div ref={rankingRef} className="usage-model-ranking" tabIndex={0} role="region" aria-label={t('usage.modelStatsTitle')}>
               <div className="usage-ranking-heading">
                 <span>{t('usage.tableModel')}</span>
-                <span>{metricLabel} · %</span>
+                <span>{isQuota ? chartLabel : `${metricLabel} · %`}</span>
               </div>
               {items.map((item, index) => (
                 <div key={item.key} className="usage-model-row">
@@ -648,8 +692,8 @@ function ModelStatsPanel({ stats, showFullUsageNumbers }: {
                       <span title={item.model}>{item.model}</span>
                     </div>
                     <div className="usage-model-value">
-                      <strong>{metric === 'amount' ? formatCostCardValue(item.amount) : formatTokens(item.requests, showFullUsageNumbers)}</strong>
-                      <span>{formatSharePercent(item.share)}</span>
+                      <strong>{formatMetricValue(item.value)}</strong>
+                      {!isQuota && <span>{formatSharePercent(item.share)}</span>}
                     </div>
                   </div>
                   <div className="usage-row-meta">
@@ -664,10 +708,12 @@ function ModelStatsPanel({ stats, showFullUsageNumbers }: {
               ))}
             </div>
           </div>
-          <div className="usage-panel-footer usage-model-note">
-            <Info aria-hidden="true" />
-            <span>{t('usage.modelStatsScope')}</span>
-          </div>
+          {!isQuota && (
+            <div className="usage-panel-footer usage-model-note">
+              <Info aria-hidden="true" />
+              <span>{t('usage.modelStatsScope')}</span>
+            </div>
+          )}
         </>
       )}
     </PanelShell>
@@ -2016,7 +2062,7 @@ export default function Usage() {
 
         {showAnalysis && (
           <section className="usage-insights" aria-label={t('usage.usageAnalysis')}>
-            <ModelStatsPanel stats={modelStats} showFullUsageNumbers={showFullUsageNumbers} />
+            <ModelStatsPanel stats={modelStats} quotaPlans={stats?.quota_plans} showFullUsageNumbers={showFullUsageNumbers} />
             <FeatureStatsPanel stats={featureStats} totalRequests={rangeRequests} showFullUsageNumbers={showFullUsageNumbers} />
             <EndpointStatsPanel stats={endpointStats} totalRequests={rangeRequests} showFullUsageNumbers={showFullUsageNumbers} />
             <APIKeyStatsPanel stats={apiKeyStats} totalRequests={rangeRequests} showFullUsageNumbers={showFullUsageNumbers} />

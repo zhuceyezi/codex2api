@@ -3525,11 +3525,20 @@ export interface UsageStats {
   error_rate: number
   feature_stats: UsageFeatureStats
   model_stats: UsageModelStat[]
+  quota_plans?: UsageQuotaPlan[]
   endpoint_stats: UsageEndpointStat[]
   api_key_stats: UsageAPIKeyStat[]
 }
 
+export interface UsageQuotaPlan {
+  plan: string
+  samples: number
+  usd_per_percent?: number
+  models: UsageModelStat[]
+}
+
 export interface UsageModelStat {
+  quota_percent?: number
   model: string
   requests: number
   tokens: number

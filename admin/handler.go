@@ -987,6 +987,16 @@ func (h *Handler) getUsageStatsFilteredCached(ctx context.Context, rangeStart, r
 	if err != nil {
 		return nil, err
 	}
+	if channel == "" || channel == database.UpstreamChannelCodex {
+		quotaCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		plans, err := h.db.GetCodexQuotaModelStats(quotaCtx, rangeStart, rangeEnd, dim)
+		cancel()
+		if err != nil {
+			log.Printf("计算套餐额度用量失败: %v", err)
+		} else {
+			stats.QuotaPlans = plans
+		}
+	}
 	if cacheKey != "" {
 		h.setRuntimeJSON(ctx, adminUsageStatsCacheNamespace, cacheKey, stats, cacheTTL)
 	}

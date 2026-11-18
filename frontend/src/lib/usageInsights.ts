@@ -1,6 +1,6 @@
 import type { UsageModelStat } from '../types'
 
-export type ModelShareMetric = 'amount' | 'requests'
+export type ModelShareMetric = 'amount' | 'requests' | 'quota'
 
 export interface ModelShareItem {
   key: string
@@ -14,7 +14,7 @@ export interface ModelShareItem {
   isOther: boolean
 }
 
-function nonNegativeNumber(value: number): number {
+function nonNegativeNumber(value = 0): number {
   return Number.isFinite(value) && value > 0 ? value : 0
 }
 
@@ -33,7 +33,7 @@ export function buildModelShareData(
       tokens: nonNegativeNumber(item.tokens),
       amount,
       errors: nonNegativeNumber(item.error_count),
-      value: metric === 'amount' ? amount : requests,
+      value: metric === 'quota' ? nonNegativeNumber(item.quota_percent) : metric === 'amount' ? amount : requests,
       share: 0,
       isOther: false,
     }
