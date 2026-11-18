@@ -136,10 +136,13 @@ func defaultDeviceProfile(cfg *DeviceProfileConfig) deviceProfile {
 		return fallback
 	}
 
+	// Version synchronization must also update stabilized profiles; otherwise this
+	// path bypasses the generated identity and keeps sending the built-in version.
+	version := effectiveLatestCodexCLIVersion()
 	profile := deviceProfile{
-		UserAgent:      hdrDefault(cfg.UserAgent, defaultDeviceProfileUserAgent),
-		PackageVersion: hdrDefault(cfg.PackageVersion, defaultDeviceProfilePackageVersion),
-		RuntimeVersion: hdrDefault(cfg.RuntimeVersion, defaultDeviceProfileRuntimeVersion),
+		UserAgent:      hdrDefault(cfg.UserAgent, replaceCodexUserAgentVersion(defaultDeviceProfileUserAgent, version)),
+		PackageVersion: hdrDefault(cfg.PackageVersion, version),
+		RuntimeVersion: hdrDefault(cfg.RuntimeVersion, version),
 		OS:             hdrDefault(cfg.OS, defaultDeviceProfileOS),
 		Arch:           hdrDefault(cfg.Arch, defaultDeviceProfileArch),
 	}
