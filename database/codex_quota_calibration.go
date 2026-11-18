@@ -161,7 +161,7 @@ func sameQuotaCycle(a, b quotaObservation) bool {
 		b.at < a.reset && a.reset >= b.reset-2 && a.reset <= b.reset+2 && b.used >= a.used
 }
 
-func (db *DB) quotaSampleCost(ctx context.Context, a, b quotaObservation) (float64, error) {
+func (db *DB) quotaSampleCost(ctx context.Context, a, b quotaObservation, checkpoints []quotaObservation) (float64, error) {
 	start, end := time.Unix(a.at, 0), time.Unix(b.at, 0)
 	rows, err := db.conn.QueryContext(ctx, `
 		SELECT created_at, COALESCE(duration_ms, 0), COALESCE(account_billed, 0),
@@ -196,7 +196,12 @@ func (db *DB) quotaSampleCost(ctx context.Context, a, b quotaObservation) (float
 		}
 		// A large drop during idle time is poor evidence about gateway cost.
 		// Avoid fitting on incomplete requests or estimated failed-stream usage.
-		if status < 200 || status >= 300 || at.Add(-time.Duration(duration)*time.Millisecond).Sub(last) > quotaMaxIdleGap {
+		if status < 200 || status >= 300 {
+			return 0, nil
+		}
+		requestStart := at.Add(-time.Duration(duration) * time.Millisecond)
+		if requestStart.Sub(last) > quotaMaxIdleGap &&
+			!quotaIdleGapConfirmed(checkpoints, a.used, last, requestStart, at) {
 			return 0, nil
 		}
 		cost += dollars
@@ -209,6 +214,22 @@ func (db *DB) quotaSampleCost(ctx context.Context, a, b quotaObservation) (float
 		return 0, nil
 	}
 	return cost, nil
+}
+
+// An idle gap does not invalidate earlier gateway usage if a reading near
+// the next request still shows the starting percentage. A reading during
+// that request can also bracket the gap, before the request is logged.
+func quotaIdleGapConfirmed(checkpoints []quotaObservation, used float64, last, requestStart, completed time.Time) bool {
+	for _, item := range checkpoints {
+		if item.at >= completed.Unix() {
+			break
+		}
+		if item.used == used && item.at > last.Unix() &&
+			requestStart.Sub(time.Unix(item.at, 0)) <= quotaMaxIdleGap {
+			return true
+		}
+	}
+	return false
 }
 
 func fitQuotaPlan(plan string, samples []quotaSample) UsageQuotaPlan {
@@ -250,25 +271,25 @@ func (db *DB) codexQuotaCalibrations(ctx context.Context, now time.Time) (map[st
 		return nil, err
 	}
 	samples := make(map[string][]quotaSample)
-	var anchor, previous quotaObservation
-	for _, item := range observations {
-		if !sameQuotaCycle(previous, item) || item.at-anchor.at > int64(quotaMaxSampleSpan/time.Second) {
-			anchor, previous = item, item
+	anchorIndex := 0
+	for index := 1; index < len(observations); index++ {
+		item, anchor := observations[index], observations[anchorIndex]
+		if !sameQuotaCycle(observations[index-1], item) || item.at-anchor.at > int64(quotaMaxSampleSpan/time.Second) {
+			anchorIndex = index
 			continue
 		}
-		previous = item
 		delta := item.used - anchor.used
 		if delta < 1 {
 			continue
 		}
-		cost, err := db.quotaSampleCost(ctx, anchor, item)
+		cost, err := db.quotaSampleCost(ctx, anchor, item, observations[anchorIndex+1:index])
 		if err != nil {
 			return nil, err
 		}
 		if cost > 0 && !math.IsInf(cost, 0) && !math.IsNaN(cost) && item.used < 100 {
 			samples[item.plan] = append(samples[item.plan], quotaSample{dollarsPerPoint: cost / delta, points: delta})
 		}
-		anchor = item
+		anchorIndex = index
 	}
 	plans := make(map[string]UsageQuotaPlan, len(samples))
 	for plan, planSamples := range samples {
