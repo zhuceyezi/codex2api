@@ -7,6 +7,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import sqlite3
@@ -161,12 +162,17 @@ def deploy(binary, version):
     logging.info('Deployed %s; retained at most 2 backups', version)
 
 
-def sync(deploy_only=False):
+def sync(deploy_only=False, upstream_commit=None):
+    if not deploy_only and upstream_commit is None:
+        logging.info('Upstream sync skipped: no reviewed commit was specified')
+        return
     if git('status', '--porcelain', '--untracked-files=no'):
         raise RuntimeError('Source tree has uncommitted changes; refusing automatic merge')
     if not deploy_only:
-        git('fetch', 'origin', 'main')
-        git('fetch', 'upstream', 'main', '--tags')
+        git('fetch', '--no-tags', '--refmap=', 'upstream', upstream_commit)
+        if git('cat-file', '-t', upstream_commit) != 'commit':
+            raise RuntimeError('The reviewed upstream SHA must identify a commit')
+        git('fetch', '--no-tags', 'origin', 'main')
         git('merge', '--ff-only', 'origin/main')
     with tempfile.TemporaryDirectory(prefix='fork-sync-', dir=STATE) as tmp:
         temp = Path(tmp)
@@ -175,7 +181,7 @@ def sync(deploy_only=False):
         try:
             if not deploy_only:
                 try:
-                    git('merge', '--no-commit', '--no-ff', 'upstream/main', cwd=work)
+                    git('merge', '--no-commit', '--no-ff', upstream_commit, cwd=work)
                 except subprocess.CalledProcessError:
                     conflicts = git('diff', '--name-only', '--diff-filter=U', cwd=work).splitlines()
                     if not conflicts or any(not excluded(name) for name in conflicts):
@@ -204,9 +210,10 @@ def sync(deploy_only=False):
             run(['go', 'build', '-trimpath', '-ldflags=-s -w -X github.com/codex2api/internal/version.Version='+version,
                  '-o', str(binary), '.'], cwd=work, timeout=1200, env=build_env)
             smoke(binary, version, temp/'smoke')
-            # Publish only a buildable, validated integration. No force push.
-            git('push', 'origin', 'HEAD:main', cwd=work)
-            git('merge', '--ff-only', revision)
+            if not deploy_only:
+                # Publish only a buildable, validated integration.
+                git('push', 'origin', 'HEAD:main', cwd=work)
+                git('merge', '--ff-only', revision)
             deploy(binary, version)
         finally:
             git('worktree', 'remove', '--force', str(work))
@@ -214,8 +221,12 @@ def sync(deploy_only=False):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--deploy-only', action='store_true', help='Build/deploy the committed fork without fetching upstream')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--deploy-only', action='store_true', help='Build and deploy the committed fork locally')
+    mode.add_argument('--upstream-commit', help='Fetch and integrate a reviewed upstream commit by its full SHA')
     args = parser.parse_args()
+    if args.upstream_commit is not None and not re.fullmatch(r'[0-9a-f]{40}', args.upstream_commit):
+        parser.error('--upstream-commit requires a full lowercase Git commit SHA')
     os.umask(0o077)
     # Cron has a minimal PATH; use the installed Node runtime explicitly.
     node_versions = Path.home()/'.nvm/versions/node'
@@ -237,7 +248,7 @@ def main():
             logging.info('Another update is running; skipped')
             return
         try:
-            sync(args.deploy_only)
+            sync(deploy_only=args.deploy_only, upstream_commit=args.upstream_commit)
         except Exception as error:
             if isinstance(error, subprocess.CalledProcessError):
                 logging.error('Command failed: %s\n%s', error.cmd, error.stderr)
