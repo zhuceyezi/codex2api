@@ -213,6 +213,8 @@ Messages 的 `tool_use.input` 必须使用对象，因此自由文本工具输�
 
 完整的分阶段边界与后续实现顺序见 [Responses 兼容性说明](RESPONSES_COMPATIBILITY.md)。
 
+转发到 Codex 上游时，HTTP 请求体和 WebSocket 的每个 `response.create` 帧都支持顶层 `request_country`。默认情况下，省略字段会让上游自行判断请求来源，显式 `null` 表示国家未知并要求上游跳过来源推断，两位大写国家码（如 `"JP"`）会原样传递。同一 WebSocket 上的后续帧可更改或省略该字段。[默认国家码配置](CONFIGURATION.md#codex-responses-请求的默认国家码)
+
 默认模式保持现有兼容行为。若客户端需要检查已知有损转换，可发送 `X-Codex2API-Strict-Compatibility: true`，或设置 `CODEX_STRICT_RESPONSES_COMPAT=true`。网关按实际选中的原生 Codex 账号检查字段及 schema，无法保留时，尚未提交的 HTTP 请求返回 `400 unsupported_feature` 和字段列表，已提交的 SSE 返回 `response.failed`，WebSocket 返回 `status:400` 错误帧；Responses 中转不受 Codex 专用限制。`background:false/null` 等空操作可通过，`background:true`、非空 `conversation` 和 `store:true` 会拒绝；reasoning、格式别名、服务档位按实际转换语义校验。工具或输出 schema 约束会被清洗改变时同样拒绝。完整范围与限制见 [Responses 兼容性说明](RESPONSES_COMPATIBILITY.md)。
 
 **请求示例:**
@@ -1290,7 +1292,10 @@ Wrong-channel accounts return `400`; missing accounts return `404`; a concurrent
 | name          | string | 否   | 账号名称，批量时自动追加序号，默认 `account-{n}`       |
 | refresh_token | string | 是   | Refresh Token，多个用 `\n` 换行分隔（单次最多 100 个） |
 | proxy_url     | string | 否   | 代理 URL                                               |
+| timezone | string | 否 | 新建账号的 IANA 时区，如 `Asia/Tokyo`。留空表示不绑定，同批次的新账号共用该值。 |
 | custom_headers | object | 否   | 自定义上游请求头；`Chatgpt-Account-Id` 用于指定目标工作区 |
+
+时区在账号首次入池前生效。重复导入和重新授权会保留已有账号的时区。Agent Identity 单条及批量新增接口也接受相同的 `timezone` 字段。
 
 同一份 RT 可以分别以“默认工作区”和多个 `Chatgpt-Account-Id` 路由加入账号池。额度、冷却、调度和统计按账号记录独立维护；同一登录身份下的相同目标工作区仍会去重。
 
@@ -1360,6 +1365,7 @@ curl -X POST http://localhost:8080/api/admin/accounts \
 | name         | string | 否   | 账号名称，批量时自动追加序号，默认 `at-account-{n}`   |
 | access_token | string | 是   | Access Token，多个用 `\n` 换行分隔（单次最多 100 个） |
 | proxy_url    | string | 否   | 代理 URL                                              |
+| timezone | string | 否 | 新建账号的 IANA 时区，如 `Asia/Tokyo`。留空表示不绑定，同批次的新账号共用该值。 |
 | custom_headers | object | 否 | 自定义上游请求头；`Chatgpt-Account-Id` 用于指定目标工作区 |
 
 同一个 AT 可以按不同目标工作区保存为多条独立路由。对于无法从 AT 解析登录身份的情况，系统至少会按“AT 原文 + 目标工作区”避免同一路由重复写入。
@@ -1520,6 +1526,7 @@ data: {"type":"diagnostics","codex_diagnostics":{"model":"gpt-5.5","http_status"
 | file         | file   | 是   | 上传文件（最大 20MB，JSON 格式支持多文件） |
 | format       | string | 否   | 文件格式：`txt`（默认）、`json`、`at_txt`  |
 | proxy_url    | string | 否   | 代理 URL                                   |
+| timezone | string | 否 | 新建账号的 IANA 时区，如 `Asia/Tokyo`。留空表示不绑定，同批次的新账号共用该值。 |
 | import_proxy | bool   | 否   | 采用文件内携带的代理，并注册进代理池       |
 
 **import_proxy 说明:**
@@ -2731,6 +2738,7 @@ curl -X DELETE http://localhost:8080/api/admin/images/jobs/1 \
 | 参数         | 类型   | 必填 | 说明                         |
 | ------------ | ------ | ---- | ---------------------------- |
 | proxy_url    | string | 否   | 账号使用的代理 URL           |
+| timezone | string | 否 | 新建账号的 IANA 时区。生成授权链接时选定，手动兑换和自动回调均沿用该值。 |
 | redirect_uri | string | 否   | 回调地址，默认为系统内置地址 |
 
 **响应:**

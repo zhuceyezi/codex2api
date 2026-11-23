@@ -439,6 +439,8 @@ export interface AccountRow {
   subscription_expires_at?: string
   /** 服务端按业务时区计算的订阅状态对象;不跟踪订阅的套餐(api/无到期时间的 free)缺省。 */
   subscription?: SubscriptionStatus
+  /** Auto-pause window resolved by the scheduler, including inherited thresholds. */
+  quota_pause_window?: '5h' | '7d' | ''
   status: AccountStatus
   error_message?: string
   at_only?: boolean
@@ -705,6 +707,7 @@ export interface AccountLiveStateResponse {
     dynamic_concurrency_limit?: number
     base_concurrency_effective?: number
     // 运行时用量投影：旧后端缺 key 时保留列表值；显式 null 表示窗口已失效。
+    quota_pause_window?: '5h' | '7d' | ''
     status?: AccountStatus
     using_credits?: boolean
     plan_type?: string
@@ -1089,6 +1092,7 @@ export interface AddAccountRequest {
   refresh_token?: string
   session_token?: string
   proxy_url: string
+  timezone?: string
   allow_duplicate?: boolean
   custom_headers?: Record<string, string> | null
   /** 添加/导入时直接绑定的账号分组；命中已存在账号时不改其分组。 */
@@ -1099,6 +1103,7 @@ export interface AddATAccountRequest {
   name?: string
   access_token: string
   proxy_url: string
+  timezone?: string
   allow_duplicate?: boolean
   custom_headers?: Record<string, string> | null
   /** 添加/导入时直接绑定的账号分组；命中已存在账号时不改其分组。 */
@@ -1110,6 +1115,7 @@ export interface ImportAgentIdentityRequest {
   name?: string
   auth_json: string
   proxy_url?: string
+  timezone?: string
 }
 
 export interface ImportAgentIdentityResponse {
@@ -1122,6 +1128,7 @@ export interface ImportAgentIdentityResponse {
 export interface AgentIdentityBatchImportRequest {
   files: string[]
   proxy_url?: string
+  timezone?: string
 }
 
 export interface AgentIdentityImportItem {
@@ -2239,6 +2246,7 @@ export interface SystemSettings {
   test_model: string
   test_content: string
   test_concurrency: number
+  background_quiet_hours: { start: string; end: string }[]
   background_refresh_interval_minutes: number
 	  usage_probe_max_age_minutes: number
 	  usage_probe_concurrency: number
@@ -4533,4 +4541,181 @@ export interface ScheduledConnectionTestResponse {
   config: ScheduledConnectionTestConfig
   timezone: string
   records: ScheduledConnectionTestRecord[]
+}
+
+export interface PromptRequestRecord {
+  id: number
+  created_at: string
+  endpoint: string
+  transport: 'http' | 'websocket'
+  model: string
+  api_key_name: string
+  action: string
+  status: number
+}
+
+export interface PromptRequestPage {
+  records: PromptRequestRecord[]
+  next_before: number
+  enabled: boolean
+  retention_days: number
+}
+
+export interface PromptRequestConversation extends PromptRequestRecord {
+  rounds: number
+}
+
+export interface PromptRequestConversationPage {
+  groups: PromptRequestConversation[]
+  next_before: number
+  enabled: boolean
+  retention_days: number
+}
+
+export interface PromptRequestRoundPage {
+  rounds: PromptRequestRecord[]
+  total: number
+  next_before: number
+}
+
+export interface PromptRequestImage {
+  index: number
+  label: string
+  source: 'embedded' | 'reference' | 'url'
+  reference?: string
+}
+
+export interface PromptRequestChanges {
+  previous_id: number
+  repeated_items: number
+  new_items: number
+  historical_images: number
+  entries: {
+    kind: 'text' | 'context' | 'tool_result' | 'tool_call'
+    label?: string
+    text: string
+    call_id?: string
+    result_request_id?: number
+  }[]
+  image_indices: number[]
+}
+
+export interface PromptRequestResponse {
+  status: 'completed' | 'interrupted' | 'failed'
+  text: string
+  tool_calls?: { call_id: string; name: string; arguments?: string }[]
+  error?: string
+  truncated?: boolean
+}
+
+export interface PromptRequestToolResult {
+  call_id: string
+  name?: string
+  text: string
+  from_request_id: number
+  arguments?: string
+  images?: PromptRequestImage[]
+}
+
+export interface PromptRequestResult {
+  response?: PromptRequestResponse
+  tool_results?: PromptRequestToolResult[]
+}
+
+export interface PromptRequestContextSection {
+  kind: 'system_prompt' | 'developer_prompt' | 'agents_md' | 'available_skills' | 'loaded_skill' | 'attempted_skill'
+  state: 'new' | 'inherited' | 'received'
+  text?: string
+  name?: string
+  path?: string
+  source?: string
+  evidence?: string
+  skills?: { name: string; path?: string }[]
+  source_request_id?: number
+}
+
+export interface PromptRequestDetail extends PromptRequestRecord {
+  text: string
+  images: PromptRequestImage[]
+  changes?: PromptRequestChanges
+  result?: PromptRequestResult
+  prompt_context?: { sections: PromptRequestContextSection[] }
+  langfuse_trace_url?: string
+}
+
+export type PromptRequestTaskStatus = 'pending' | 'completed' | 'interrupted' | 'failed' | 'unobserved'
+export type PromptRequestTaskSource = 'client' | 'gateway'
+
+export interface PromptRequestTask {
+  id: number
+  started_at: string
+  request_ids: number[]
+  request_count?: number
+  user_preview?: string
+  user_text?: string
+  user_text_truncated?: boolean
+  user_request_id?: number
+  user_images?: PromptRequestImage[]
+  final_preview?: string
+  final_preview_truncated?: boolean
+  final_redacted?: boolean
+  final_source?: PromptRequestTaskSource
+  final_status?: PromptRequestTaskStatus
+  duration_ms?: number
+  timing_source?: 'client' | 'gateway_observed'
+  status?: PromptRequestTaskStatus
+}
+
+export interface PromptRequestTaskInternalEvent extends PromptRequestTask {
+  kind: 'context_compaction'
+}
+
+export interface PromptRequestTaskPage {
+  tasks: PromptRequestTask[]
+  internal_events?: PromptRequestTaskInternalEvent[]
+  next_before: number
+  total_requests: number
+}
+
+export interface PromptRequestTaskTool {
+  name?: string
+  call_id?: string
+  arguments?: string
+  result?: string
+  status?: string
+  from_request_id?: number
+  images?: PromptRequestImage[]
+}
+
+export interface PromptRequestTaskSkillUsage {
+  name: string
+  path: string
+  source: 'skill_helper_execution'
+  source_request_id: number
+  command: string
+  evidence: string
+}
+
+export interface PromptRequestTaskStep {
+  request_id: number
+  created_at: string
+  model: string
+  endpoint: string
+  action: string
+  status: number
+  commentary?: string
+  response?: { status: string; text?: string; error?: string; truncated?: boolean }
+  tools: PromptRequestTaskTool[]
+  skills?: { name: string; path?: string; source: string; source_request_id: number }[]
+  skill_usage?: PromptRequestTaskSkillUsage[]
+}
+
+export interface PromptRequestTaskDetail extends PromptRequestTask {
+  user?: { text: string; request_id?: number; images?: PromptRequestImage[]; source?: PromptRequestTaskSource }
+  steps: PromptRequestTaskStep[]
+  steps_truncated?: boolean
+  client_steps?: { name: string; kind: string; status: string; at?: string }[]
+  client_steps_truncated?: boolean
+  skills: PromptRequestContextSection[]
+  final?: { text: string; status: PromptRequestTaskStatus; source: PromptRequestTaskSource; truncated?: boolean; redacted?: boolean }
 }

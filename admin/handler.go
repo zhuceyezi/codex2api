@@ -68,6 +68,9 @@ type Handler struct {
 	refreshAccount           func(context.Context, int64) error
 	probeUsage               func(context.Context, *auth.Account) error
 
+	promptRequestRecording bool
+	promptTraceExporter    *promptTraceExporter
+
 	codexUsageRefreshRunning atomic.Bool
 
 	// executeClaudeUsageProbe is injectable for tests; production uses the
@@ -956,6 +959,18 @@ func (h *Handler) invalidateAPIKeyRuntimeCaches(ctx context.Context, apiKey stri
 	}
 }
 
+// usageKeyStatsCacheKey scopes cached labels to the current API key configuration.
+func (h *Handler) usageKeyStatsCacheKey(ctx context.Context, key string) string {
+	if key == "" || h.cache == nil {
+		return ""
+	}
+	revision, err := h.db.GetAPIKeyAuthRevision(ctx)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d:%s", revision.Namespace, revision.Generation, key)
+}
+
 func (h *Handler) getUsageStatsCached(ctx context.Context, rangeStart, rangeEnd time.Time, channel string) (*database.UsageStats, error) {
 	return h.getUsageStatsFilteredCached(ctx, rangeStart, rangeEnd, channel, database.UsageLogFilter{})
 }
@@ -974,6 +989,7 @@ func (h *Handler) getUsageStatsFilteredCached(ctx context.Context, rangeStart, r
 		cacheKey = fmt.Sprintf("range:%d:%d:%s%s", rangeStart.Unix()/30, rangeEnd.Unix()/30, channel, dimKey)
 		cacheTTL = adminUsageRangeCacheTTL
 	}
+	cacheKey = h.usageKeyStatsCacheKey(ctx, cacheKey)
 	if cacheKey != "" {
 		cacheKey += fmt.Sprintf(":revision:%d", liveupdates.UsageRevision())
 	}
@@ -1369,6 +1385,14 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	api.POST("/settings/background-upload", h.UploadBackgroundAsset)
 	api.POST("/settings/image-storage/test", h.TestImageStorageConnection)
 	api.GET("/prompt-filter/logs", h.ListPromptFilterLogs)
+	api.GET("/prompt-filter/requests", h.ListPromptRequests)
+	api.GET("/prompt-filter/request-conversations", h.ListPromptRequestConversations)
+	api.GET("/prompt-filter/request-conversations/:id", h.ListPromptRequestRounds)
+	api.GET("/prompt-filter/request-conversations/:id/tasks", h.ListPromptRequestTasks)
+	api.GET("/prompt-filter/request-tasks/:id", h.GetPromptRequestTask)
+	api.PUT("/prompt-filter/requests/retention", h.UpdatePromptRequestRetention)
+	api.GET("/prompt-filter/requests/:id", h.GetPromptRequest)
+	api.GET("/prompt-filter/requests/:id/images/:image", h.GetPromptRequestImage)
 	api.GET("/prompt-filter/logs/match", h.MatchPromptFilterLog)
 	api.DELETE("/prompt-filter/logs", h.ClearPromptFilterLogs)
 	api.GET("/prompt-filter/retention", h.GetPromptLogRetention)
@@ -1767,6 +1791,7 @@ type accountResponse struct {
 	// 套餐（api/无到期时间的 free）为空。
 	Subscription          *auth.SubscriptionStatusView `json:"subscription,omitempty"`
 	Status                string                       `json:"status"`
+	QuotaPauseWindow      string                       `json:"quota_pause_window,omitempty"`
 	ErrorMessage          string                       `json:"error_message,omitempty"`
 	ATOnly                bool                         `json:"at_only"`
 	CreditEnabled         bool                         `json:"credit_enabled"`
@@ -2161,7 +2186,7 @@ func (h *Handler) GetAccount(c *gin.Context) {
 		requestCounts = make(map[int64]*database.AccountRequestCount)
 	}
 	now := time.Now()
-	usage5h, usage7d, err := h.db.GetAccountUsageWindowsByIDs(ctx, []int64{id}, now.Add(-5*time.Hour), now.AddDate(0, 0, -7))
+	usage5h, usage7d, err := h.loadAccountUsageDetails(ctx, []int64{id}, now)
 	if err != nil {
 		log.Printf("获取账号 %d 用量统计失败: %v", id, err)
 		usage5h = make(map[int64]*database.AccountTimeRangeUsage)
@@ -3596,6 +3621,9 @@ func (h *Handler) getAccountUsageWindows(ctx context.Context) (map[int64]*databa
 	if h.getRuntimeJSON(ctx, adminAccountWindowsNamespace, "global", &cached) && cached.Usage5h != nil && cached.Usage7d != nil {
 		return cached.Usage5h, cached.Usage7d
 	}
+	// The legacy full-list cache still uses one rolling 5h/7d window for every
+	// account. The paged page-stats and GetAccount paths (issue #798) align
+	// usage details to each account's official reset when one is available.
 	now := time.Now()
 	usage5h, usage7d, err := h.db.GetAccountUsageWindows(ctx, now.Add(-5*time.Hour), now.AddDate(0, 0, -7))
 	if err != nil {
@@ -3613,6 +3641,7 @@ type addAccountReq struct {
 	RefreshToken   string            `json:"refresh_token"`
 	SessionToken   string            `json:"session_token"`
 	ProxyURL       string            `json:"proxy_url"`
+	Timezone       string            `json:"timezone"`
 	CustomHeaders  map[string]string `json:"custom_headers"`
 	AllowDuplicate bool              `json:"allow_duplicate"`
 	// SkipRefresh 只入库、不换 AT、不打用量探测。大批量脚本导入时应打开，
@@ -3722,6 +3751,10 @@ func (h *Handler) AddAccount(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "代理URL无效")
 		return
 	}
+	if err := validateAccountTimezone(req.Timezone); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	customHeaders, err := normalizeCustomHeaders(req.CustomHeaders)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, err.Error())
@@ -3744,7 +3777,7 @@ func (h *Handler) AddAccount(c *gin.Context) {
 
 	var seeds []tokenCredentialSeed
 	for i := 0; i < total; i++ {
-		seed := tokenCredentialSeed{allowDuplicate: req.AllowDuplicate, customHeaders: customHeaders}
+		seed := tokenCredentialSeed{allowDuplicate: req.AllowDuplicate, customHeaders: customHeaders, newAccountTimezone: req.Timezone}
 		if len(refreshTokens) > 0 {
 			seed.refreshToken = refreshTokens[i]
 		}
@@ -3957,6 +3990,7 @@ type addATAccountReq struct {
 	Name           string            `json:"name"`
 	AccessToken    string            `json:"access_token"`
 	ProxyURL       string            `json:"proxy_url"`
+	Timezone       string            `json:"timezone"`
 	CustomHeaders  map[string]string `json:"custom_headers"`
 	AllowDuplicate bool              `json:"allow_duplicate"`
 	// GroupIDs 让添加时就把新账号绑进指定分组；重复跳过与命中已有身份被更新的账号不受影响。
@@ -3991,6 +4025,10 @@ func (h *Handler) AddATAccount(c *gin.Context) {
 
 	if err := security.ValidateProxyURL(req.ProxyURL); err != nil {
 		writeError(c, http.StatusBadRequest, "代理URL无效")
+		return
+	}
+	if err := validateAccountTimezone(req.Timezone); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	customHeaders, err := normalizeCustomHeaders(req.CustomHeaders)
@@ -4068,9 +4106,10 @@ func (h *Handler) AddATAccount(c *gin.Context) {
 		}
 
 		seed := normalizeTokenCredentialSeed(tokenCredentialSeed{
-			accessToken:    at,
-			allowDuplicate: req.AllowDuplicate,
-			customHeaders:  customHeaders,
+			accessToken:        at,
+			newAccountTimezone: req.Timezone,
+			allowDuplicate:     req.AllowDuplicate,
+			customHeaders:      customHeaders,
 		})
 		// codex_at 不走 OAuth 身份去重：whoami 补出来的 email+工作区会撞上同工作区的
 		// OAuth 账号，把 PAT 合并进去等于用 PAT 覆盖它的 access_token。PAT 始终按 token 路由键去重。
@@ -4205,7 +4244,7 @@ func (h *Handler) streamAddATAccounts(c *gin.Context, req addATAccountReq, token
 			name = fmt.Sprintf("%s-%d", req.Name, i+1)
 		}
 
-		seed := normalizeTokenCredentialSeed(tokenCredentialSeed{accessToken: at, allowDuplicate: req.AllowDuplicate, customHeaders: req.CustomHeaders})
+		seed := normalizeTokenCredentialSeed(tokenCredentialSeed{accessToken: at, allowDuplicate: req.AllowDuplicate, customHeaders: req.CustomHeaders, newAccountTimezone: req.Timezone})
 		// 同 AddATAccount：codex_at 不进 OAuth 身份去重，见上方注释。
 		if seed.accessTokenType != accessTokenTypeCodexAT && seed.email != "" && effectiveWorkspaceIDFromSeed(seed) != "" {
 			id, updated, newAcc, err := h.upsertOAuthIdentityAccountDeferred(ctx, name, req.ProxyURL, seed, "manual_at", overwriteAccountProxy)
@@ -4921,6 +4960,7 @@ type importToken struct {
 // importSettings 汇总一次导入请求的表单开关。这些开关要穿过"入口 → 4 个格式
 // 解析函数 → importAccountsCommon"三层，继续用位置参数堆叠会越加越长。
 type importSettings struct {
+	timezone string
 	// defaultProxyURL 是表单里填的代理：文件没带代理、或没开 importProxies 时的兜底。
 	defaultProxyURL string
 	// importProxies 打开后采用文件内携带的代理，并把它们注册进代理池。
@@ -5540,8 +5580,14 @@ func (h *Handler) ImportAccounts(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	timezone := strings.TrimSpace(c.PostForm("timezone"))
+	if err := validateAccountTimezone(timezone); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	settings := importSettings{
 		defaultProxyURL: c.PostForm("proxy_url"),
+		timezone:        timezone,
 		// TXT 系格式一行一个 token，物理上不可能携带代理。这里忽略开关而不是
 		// 报错，免得前端还要跟着格式切换清理该状态。
 		importProxies:  parseBoolForm(c.PostForm("import_proxy")) && (format == "json" || format == "json_at"),
@@ -6192,6 +6238,7 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 			proxyURL := settings.proxyForToken(tok)
 
 			seed := importTokenSeed(tok, conflictingChatGPTIDs)
+			seed.newAccountTimezone = settings.timezone
 			seed.allowDuplicate = allowDuplicate
 			seed.customHeaders = cloneCustomHeaders(importCustomHeaders)
 			importSource := "import"
@@ -7715,12 +7762,12 @@ func (h *Handler) GetAPIKeyTokenStats(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 
-	cacheKey := fmt.Sprintf("%d:%d", rangeStart.Unix()/30, rangeEnd.Unix()/30)
+	cacheKey := h.usageKeyStatsCacheKey(ctx, fmt.Sprintf("%d:%d", rangeStart.Unix()/30, rangeEnd.Unix()/30))
 	type cachedResponse struct {
 		Items []database.APIKeyTokenStat `json:"items"`
 	}
 	var response cachedResponse
-	if h.getRuntimeJSON(ctx, adminAPIKeyStatsNamespace, cacheKey, &response) {
+	if cacheKey != "" && h.getRuntimeJSON(ctx, adminAPIKeyStatsNamespace, cacheKey, &response) {
 		c.JSON(http.StatusOK, response)
 		return
 	}
@@ -7734,7 +7781,9 @@ func (h *Handler) GetAPIKeyTokenStats(c *gin.Context) {
 		items = []database.APIKeyTokenStat{}
 	}
 	response.Items = items
-	h.setRuntimeJSON(ctx, adminAPIKeyStatsNamespace, cacheKey, response, adminUsageRangeCacheTTL)
+	if cacheKey != "" {
+		h.setRuntimeJSON(ctx, adminAPIKeyStatsNamespace, cacheKey, response, adminUsageRangeCacheTTL)
+	}
 	c.JSON(http.StatusOK, response)
 }
 
@@ -9536,6 +9585,8 @@ type settingsResponse struct {
 	OutputGuardMaxChannelBytes         int64                            `json:"output_guard_max_channel_bytes"`
 	OutputGuardMaxRequestBytes         int64                            `json:"output_guard_max_request_bytes"`
 	OutputGuardConfigGeneration        int64                            `json:"output_guard_config_generation"`
+
+	BackgroundQuietHours []database.BackgroundQuietPeriod `json:"background_quiet_hours"`
 }
 
 type rawJSON = json.RawMessage
@@ -9715,6 +9766,8 @@ type updateSettingsReq struct {
 	OutputGuardMaxChannelBytes          *int64                           `json:"output_guard_max_channel_bytes"`
 	OutputGuardMaxRequestBytes          *int64                           `json:"output_guard_max_request_bytes"`
 	OutputGuardConfigGeneration         rawJSON                          `json:"output_guard_config_generation"`
+
+	BackgroundQuietHours *[]database.BackgroundQuietPeriod `json:"background_quiet_hours"`
 }
 
 func updateSettingsHasFieldsOtherThanCustomPatterns(req updateSettingsReq) bool {
@@ -10410,6 +10463,7 @@ func (h *Handler) GetSettings(c *gin.Context) {
 		OAuthModelCooldownSeconds:           modelCooldownSettings.OAuthSeconds,
 		OAuthModelCooldownBackoffEnabled:    modelCooldownSettings.OAuthBackoffEnabled,
 		OAuthUnsupportedCooldownSeconds:     modelCooldownSettings.UnsupportedCooldownSeconds(),
+		BackgroundQuietHours:                decodeBackgroundQuietHours(h.store.GetBackgroundQuietHours()),
 		BackgroundRefreshIntervalMinutes:    h.store.GetBackgroundRefreshIntervalMinutes(),
 		UsageProbeMaxAgeMinutes:             h.store.GetUsageProbeMaxAgeMinutes(),
 		UsageProbeConcurrency:               h.store.GetUsageProbeConcurrency(),
@@ -10924,6 +10978,16 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		modelsListReadMaxBytes = database.NormalizeModelsListReadMaxBytes(existingSettings.ModelsListReadMaxBytes)
 		sessionSlotBufferEnabled = existingSettings.SessionSlotBufferEnabled
 		sessionSlotBufferSeconds = database.NormalizeSessionSlotBufferSeconds(existingSettings.SessionSlotBufferSeconds)
+	}
+	quietHours := h.store.GetBackgroundQuietHours()
+	if req.BackgroundQuietHours != nil {
+		raw, _ := json.Marshal(*req.BackgroundQuietHours)
+		var quietErr error
+		quietHours, quietErr = database.NormalizeBackgroundQuietHours(string(raw))
+		if quietErr != nil {
+			writeError(c, http.StatusBadRequest, quietErr.Error())
+			return
+		}
 	}
 	if req.SessionSlotBufferEnabled != nil {
 		sessionSlotBufferEnabled = *req.SessionSlotBufferEnabled
@@ -12015,6 +12079,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		CodexImagesMainModel:                codexImagesMainModel,
 		TestContent:                         h.store.GetTestContent(),
 		TestConcurrency:                     h.store.GetTestConcurrency(),
+		BackgroundQuietHours:                quietHours,
 		BackgroundRefreshIntervalMinutes:    h.store.GetBackgroundRefreshIntervalMinutes(),
 		UsageProbeMaxAgeMinutes:             h.store.GetUsageProbeMaxAgeMinutes(),
 		UsageProbeConcurrency:               h.store.GetUsageProbeConcurrency(),
@@ -12151,6 +12216,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 	if err != nil {
 		log.Printf("无法持久化保存设置: %v", err)
+		if req.BackgroundQuietHours != nil {
+			writeError(c, http.StatusInternalServerError, "保存巡检暂停时段失败，设置未生效")
+			return
+		}
 		if outputGuardUpdateRequested {
 			// 事务内校验失败是调用方输入问题，映射 400；其余（数据库/IO 等）才是 500。
 			if errors.Is(err, database.ErrInvalidOutputGuardSettings) {
@@ -12201,6 +12270,9 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		writeError(c, http.StatusInternalServerError, "保存系统设置失败，设置未生效："+err.Error())
 		return
 	} else {
+		if req.BackgroundQuietHours != nil {
+			_ = h.store.SetBackgroundQuietHours(quietHours)
+		}
 		// settings 事务提交成功后立即热应用基础运行时上限与全局限流，
 		// 确保后续 UpdateContinuousRetryPolicy 等独立步骤即使失败，
 		// 已提交到数据库的并发/重试/RPM 配置在本实例内存中也保持一致。
@@ -12409,6 +12481,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		OAuthModelCooldownSeconds:           modelCooldownSettings.OAuthSeconds,
 		OAuthModelCooldownBackoffEnabled:    modelCooldownSettings.OAuthBackoffEnabled,
 		OAuthUnsupportedCooldownSeconds:     modelCooldownSettings.UnsupportedCooldownSeconds(),
+		BackgroundQuietHours:                decodeBackgroundQuietHours(h.store.GetBackgroundQuietHours()),
 		BackgroundRefreshIntervalMinutes:    h.store.GetBackgroundRefreshIntervalMinutes(),
 		UsageProbeMaxAgeMinutes:             h.store.GetUsageProbeMaxAgeMinutes(),
 		UsageProbeConcurrency:               h.store.GetUsageProbeConcurrency(),

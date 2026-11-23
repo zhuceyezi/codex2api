@@ -23,6 +23,7 @@ interface SelectProps {
   className?: string
   compact?: boolean
   triggerClassName?: string
+  dropdownMinWidth?: number
 }
 
 interface DropdownPosition {
@@ -76,6 +77,7 @@ export function Select({
   className,
   compact = false,
   triggerClassName,
+  dropdownMinWidth = 0,
 }: SelectProps) {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<DropdownPosition | null>(null)
@@ -97,7 +99,7 @@ export function Select({
     const openUp = spaceBelow < Math.min(DROPDOWN_MAX_HEIGHT, 160) && spaceAbove > spaceBelow
     const maxHeight = Math.max(140, Math.min(DROPDOWN_MAX_HEIGHT, openUp ? spaceAbove : spaceBelow))
     // Keep dropdown fully inside the viewport on small screens.
-    const width = Math.min(rect.width, viewportWidth - VIEWPORT_PADDING * 2)
+    const width = Math.min(Math.max(rect.width, dropdownMinWidth), viewportWidth - VIEWPORT_PADDING * 2)
     const maxLeft = viewportWidth - width - VIEWPORT_PADDING
     const left = Math.min(Math.max(VIEWPORT_PADDING, rect.left), Math.max(VIEWPORT_PADDING, maxLeft))
     setPosition({
@@ -107,7 +109,7 @@ export function Select({
       maxHeight,
       openUp,
     })
-  }, [])
+  }, [dropdownMinWidth])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -304,16 +306,9 @@ export function Select({
                             ? 'bg-primary/10 text-primary'
                             : 'text-foreground hover:bg-accent/70 hover:text-accent-foreground'
                         )}
-                        // 用 onPointerDown 在 target 阶段直接 commit 选择：
-                        //  1. 早于 document 的 outside-pointerdown handler，避免 portal 边界
-                        //     场景下 dropdown 被先关掉、click 永远收不到的竞态；
-                        //  2. preventDefault 阻止 button 的默认 focus 转移，下拉关闭时焦点自然
-                        //     回到 trigger，不会跳到无关元素。
-                        onPointerDown={(event) => {
-                          event.preventDefault()
-                          handleSelect(option.value)
-                        }}
-                        // onClick 兜底：键盘 Enter / Space 触发的合成 click 没有 pointerdown。
+                        // Keep mouse focus on the trigger. Activate on click, not pointerdown:
+                        // a touch starting on an option can still turn into a scroll.
+                        onMouseDown={(event) => event.preventDefault()}
                         onClick={() => handleSelect(option.value)}
                       >
                         <span className={cn('min-w-0 flex-1', option.content ? 'block' : 'truncate')}>{option.content ?? option.label}</span>

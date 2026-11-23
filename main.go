@@ -57,6 +57,13 @@ func main() {
 		log.Fatalf("加载核心环境配置失败 (请检查 .env 文件): %v", err)
 	}
 	proxy.ConfigureDownstreamKeepaliveFromEnv()
+	if err := proxy.ConfigureCodexIdentityTimeFromEnv(); err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("Codex identity UUIDv7 time cutoff: %d (0 = legacy)", proxy.CodexIdentityV2FromUnixMilli())
+	if err := proxy.ValidateCodexInstallationPins(); err != nil {
+		log.Fatal(err)
+	}
 	log.Printf("物理层配置加载成功: port=%d, database=%s, cache=%s, tz=%s", cfg.Port, cfg.Database.Label(), cfg.Cache.Label(), time.Local)
 
 	// 2. 初始化数据库
@@ -118,7 +125,7 @@ func main() {
 			PromptFilterCustomPatterns:        "[]",
 			PromptFilterDisabledPatterns:      "[]",
 			ClientCompatMode:                  proxy.ClientCompatModePreserve,
-			CodexMinCLIVersion:                "0.160.0",
+			CodexMinCLIVersion:                "0.170.0",
 			UsageLogMode:                      database.UsageLogModeFull,
 			UsageLogBatchSize:                 200,
 			UsageLogFlushIntervalSeconds:      5,
@@ -173,7 +180,7 @@ func main() {
 			PromptFilterCustomPatterns:        "[]",
 			PromptFilterDisabledPatterns:      "[]",
 			ClientCompatMode:                  proxy.ClientCompatModePreserve,
-			CodexMinCLIVersion:                "0.160.0",
+			CodexMinCLIVersion:                "0.170.0",
 			UsageLogMode:                      database.UsageLogModeFull,
 			UsageLogBatchSize:                 200,
 			UsageLogFlushIntervalSeconds:      5,
@@ -502,6 +509,9 @@ func main() {
 	defer conversations.Close()
 	handler.SetConversationRecorder(conversations)
 	handler.SetRuntimeCache(tc)
+	handler.StartPromptRequestRetention(backgroundCtx)
+	adminHandler.ConfigurePromptRequestRecords(cfg.PromptRequestRecording)
+	adminHandler.StartPromptTraceExport(backgroundCtx, cfg.PromptTraceExport)
 	defer handler.CloseAPIKeyAuthCache()
 	adminHandler.SetAPIKeyAuthCacheHandler(handler)
 
@@ -691,11 +701,12 @@ func main() {
 			return
 		}
 		c.JSON(200, gin.H{
-			"status":          "ok",
-			"build_version":   version.Current(),
-			"available":       available,
-			"total":           total,
-			"counts_complete": countsComplete,
+			"status":                         "ok",
+			"build_version":                  version.Current(),
+			"codex_identity_v2_from_unix_ms": proxy.CodexIdentityV2FromUnixMilli(),
+			"available":                      available,
+			"total":                          total,
+			"counts_complete":                countsComplete,
 		})
 	})
 

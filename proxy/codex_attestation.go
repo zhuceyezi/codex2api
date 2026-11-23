@@ -3,6 +3,8 @@ package proxy
 import (
 	"context"
 	"net/http"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 )
 
 var codexAttestationService = attestation.NewService(nil)
+var codexAttestationPlatformPattern = regexp.MustCompile(`^.+/[^ ]+ \((.+) [^ ;]+; ([^;)]+)\)`)
 
 type CodexAttestationInput struct {
 	Headers http.Header
@@ -31,6 +34,11 @@ func ApplyCodexAttestation(ctx context.Context, input CodexAttestationInput) err
 		return nil
 	}
 	setCodexAttestation(input.Headers, "")
+	// The official TUI has no built-in hardware attestation provider. Do not
+	// manufacture desktop display/language signals when emulating that client.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("CODEX_DISABLE_GENERATED_ATTESTATION")), "true") {
+		return nil
+	}
 	if input.FrozenValue != nil {
 		setCodexAttestation(input.Headers, *input.FrozenValue)
 		return nil
@@ -52,7 +60,7 @@ func ApplyCodexAttestation(ctx context.Context, input CodexAttestationInput) err
 }
 
 func codexAttestationRequest(userAgent string) attestation.Request {
-	parts := codexPersonaPlatformPattern.FindStringSubmatch(strings.TrimSpace(userAgent))
+	parts := codexAttestationPlatformPattern.FindStringSubmatch(strings.TrimSpace(userAgent))
 	if len(parts) != 3 {
 		return attestation.Request{}
 	}

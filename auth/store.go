@@ -1800,16 +1800,32 @@ func (a *Account) quotaAutoPause5hGuardDispatchPenaltyLocked(now time.Time) floa
 }
 
 func (a *Account) quotaAutoPausedLocked(now time.Time) bool {
+	return a.quotaAutoPauseWindowLocked(now) != ""
+}
+
+// quotaAutoPauseWindowLocked uses the scheduler's effective thresholds, including
+// inherited group/global settings. Prefer the weekly window when both pause.
+func (a *Account) quotaAutoPauseWindowLocked(now time.Time) string {
 	// 积分顶替限流开着且当下确有积分时，自动暂停让位：阈值最高只到 100%，照常按阈值
 	// 停调度的话，窗口永远走不到「打满后改扣积分」那一步，账号级开关形同虚设（issue #791）。
 	// 积分归零或工作区 hard-stop 后 creditSkipsUsageWindowLocked 转 false，阈值恢复生效。
 	if a.creditSkipsUsageWindowLocked() {
-		return false
+		return ""
+	}
+	if quotaAutoPausedByWindow(a.UsagePercent7d, a.UsagePercent7dValid, a.Reset7dAt, a.effectiveAutoPause7d, a.AutoPause7dDisabled, now) {
+		return "7d"
 	}
 	if quotaAutoPausedByWindow(a.UsagePercent5h, a.UsagePercent5hValid, a.Reset5hAt, a.effectiveAutoPause5h, a.AutoPause5hDisabled, now) {
-		return true
+		return "5h"
 	}
-	return quotaAutoPausedByWindow(a.UsagePercent7d, a.UsagePercent7dValid, a.Reset7dAt, a.effectiveAutoPause7d, a.AutoPause7dDisabled, now)
+	return ""
+}
+
+// GetQuotaAutoPauseWindow returns the window responsible for an automatic pause.
+func (a *Account) GetQuotaAutoPauseWindow() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.quotaAutoPauseWindowLocked(time.Now())
 }
 
 func (a *Account) recomputeEffectiveAutoPause(s *Store) {
@@ -2733,6 +2749,7 @@ func (a *Account) MarkUsageFrameObserved(kind string, at time.Time) {
 // It intentionally avoids GetSchedulerDebugSnapshot and other recomputing
 // getters, which are too expensive for a one-second cadence over a large page.
 type AccountLiveUsageSnapshot struct {
+	QuotaPauseWindow    string
 	Status              string
 	UsingCredits        bool
 	PlanType            string
@@ -2762,6 +2779,7 @@ func (a *Account) GetAccountLiveUsageSnapshot() AccountLiveUsageSnapshot {
 	defer a.mu.RUnlock()
 	now := time.Now()
 	return AccountLiveUsageSnapshot{
+		QuotaPauseWindow:    a.quotaAutoPauseWindowLocked(now),
 		Status:              a.runtimeStatusLocked(now),
 		UsingCredits:        a.usingCreditsLocked(now),
 		PlanType:            a.PlanType,
@@ -4012,6 +4030,7 @@ type Store struct {
 	autoCleanupBatch                   atomic.Bool
 	maxRetries                         atomic.Int64 // 请求失败最大重试次数（换号重试）
 	maxRateLimitRetries                atomic.Int64 // 429 最大换号重试次数
+	backgroundQuietHours               atomic.Pointer[backgroundQuietSchedule]
 	backgroundRefreshInterval          atomic.Int64 // 后台刷新/探针巡检间隔（ns）
 	usageProbeMaxAge                   atomic.Int64 // 用量探针快照最大缓存时长（ns）
 	usageProbeConcurrency              atomic.Int64 // 用量探针并行度
@@ -4833,6 +4852,9 @@ func NewStore(db *database.DB, tc cache.TokenCache, settings *database.SystemSet
 	}
 	s.testModel.Store(settings.TestModel)
 	s.testContent.Store(NormalizeTestContent(settings.TestContent))
+	if err := s.SetBackgroundQuietHours(settings.BackgroundQuietHours); err != nil {
+		log.Printf("忽略无效的巡检暂停时段: %v", err)
+	}
 	s.SetBackgroundRefreshInterval(time.Duration(settings.BackgroundRefreshIntervalMinutes) * time.Minute)
 	s.SetUsageProbeMaxAge(time.Duration(settings.UsageProbeMaxAgeMinutes) * time.Minute)
 	s.SetUsageProbeConcurrency(settings.UsageProbeConcurrency)
@@ -6816,7 +6838,7 @@ func (s *Store) StartBackgroundRefresh() {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		refreshTimer := time.NewTimer(s.GetBackgroundRefreshInterval())
+		refreshTimer := time.NewTimer(s.backgroundRefreshDelay(time.Now()))
 		catalogTimer := time.NewTimer(10 * time.Second)
 		defer catalogTimer.Stop()
 		autoCleanupTicker := time.NewTicker(30 * time.Second)
@@ -6846,7 +6868,7 @@ func (s *Store) StartBackgroundRefresh() {
 				default:
 				}
 			}
-			refreshTimer.Reset(s.GetBackgroundRefreshInterval())
+			refreshTimer.Reset(s.backgroundRefreshDelay(time.Now()))
 		}
 
 		// 启动时先武装一次；此后每次巡检/唤醒/到点后都会重排，保证始终盯住最近边界。
@@ -6868,7 +6890,7 @@ func (s *Store) StartBackgroundRefresh() {
 					s.TriggerUsageProbeAsync()
 					s.TriggerRecoveryProbeAsync()
 				}
-				refreshTimer.Reset(s.GetBackgroundRefreshInterval())
+				refreshTimer.Reset(s.backgroundRefreshDelay(time.Now()))
 				// 巡检可能刷新了各账号的重置时间，顺带重排「到点即探」定时器，
 				// 兜底那些两次唤醒之间未显式 WakeBoundaryProbe 的边界变化。
 				s.armNextBoundaryProbe(boundaryProbeTimer)
@@ -11959,6 +11981,9 @@ func (s *Store) VerifyAccountAuthAsync(account *Account) {
 
 // TriggerUsageProbeAsync 异步触发一次批量用量探针
 func (s *Store) TriggerUsageProbeAsync() {
+	if s.BackgroundInspectionPaused(time.Now()) {
+		return
+	}
 	if !s.usageProbeBatch.CompareAndSwap(false, true) {
 		return
 	}
@@ -12030,6 +12055,9 @@ func (s *Store) armNextBoundaryProbe(timer *time.Timer) {
 
 // TriggerRecoveryProbeAsync 异步触发一次封禁账号恢复探测
 func (s *Store) TriggerRecoveryProbeAsync() {
+	if s.BackgroundInspectionPaused(time.Now()) {
+		return
+	}
 	if s.GetLazyMode() {
 		return
 	}
@@ -12277,6 +12305,9 @@ func (s *Store) parallelProbeUsage(ctx context.Context) {
 // parallelProbeUsageWith 以指定 maxAge 阈值执行一次批量用量探针。
 // maxAge<=0 时视为"立即探针"——只要账号能跑就刷一次。
 func (s *Store) parallelProbeUsageWith(ctx context.Context, maxAge time.Duration) {
+	if maxAge > 0 && s.BackgroundInspectionPaused(time.Now()) {
+		return
+	}
 	s.usageProbeMu.RLock()
 	probeFn := s.usageProbe
 	s.usageProbeMu.RUnlock()
@@ -12303,6 +12334,9 @@ func (s *Store) parallelProbeUsageWith(ctx context.Context, maxAge time.Duration
 			defer wg.Done()
 			defer func() { <-sem }()
 			defer account.FinishUsageProbe()
+			if maxAge > 0 && s.BackgroundInspectionPaused(time.Now()) {
+				return
+			}
 
 			probeCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 			defer cancel()
@@ -12331,6 +12365,9 @@ func (s *Store) TriggerUsageProbeForceAsync() {
 }
 
 func (s *Store) parallelRecoveryProbe(ctx context.Context) {
+	if s.BackgroundInspectionPaused(time.Now()) {
+		return
+	}
 	s.usageProbeMu.RLock()
 	probeFn := s.usageProbe
 	s.usageProbeMu.RUnlock()
@@ -12357,6 +12394,9 @@ func (s *Store) parallelRecoveryProbe(ctx context.Context) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			defer account.FinishRecoveryProbe()
+			if s.BackgroundInspectionPaused(time.Now()) {
+				return
+			}
 
 			probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
@@ -12556,6 +12596,9 @@ func (s *Store) Accounts() []*Account {
 
 // parallelRefreshAll 并行刷新所有需要刷新的账号（Worker Pool，并发度 10）
 func (s *Store) parallelRefreshAll(ctx context.Context) {
+	if s.BackgroundInspectionPaused(time.Now()) {
+		return
+	}
 	accounts := s.accountSnapshotAccounts()
 
 	sem := make(chan struct{}, 10)
@@ -12571,6 +12614,9 @@ func (s *Store) parallelRefreshAll(ctx context.Context) {
 		go func(idx int, account *Account) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			if s.BackgroundInspectionPaused(time.Now()) {
+				return
+			}
 
 			if err := s.refreshAccount(ctx, account); err != nil {
 				log.Printf("[账号 %d] 刷新失败: %v", idx+1, err)
